@@ -1,0 +1,5 @@
+# メモ
+
+## JavaScriptとCSSはどうしよう？
+
+npm install

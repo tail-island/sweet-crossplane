@@ -1,0 +1,24 @@
+{
+  "name": "sweet-crossplane",
+  "version": "0.0.1",
+  "main": "xxx.js",
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components"
+  ],
+  "dependencies": {
+    "jquery": "*",
+    "bootstrap": "*"
+  },
+  "exportsOverride": {
+    "jquery": {
+      ".": "dist/*.min.*"
+    },
+    "bootstrap": {
+      ".": "dist/js/*.min.*",
+      "css": "dist/css/bootstrap.min.css",
+      "fonts": "dist/fonts/*"
+    }
+  }
+}
