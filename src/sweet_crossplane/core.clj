@@ -16,6 +16,8 @@
 
 (dog-mission/conj-resource-bundle-namespace "sweet-crossplane.message")
 
+;; Utilities.
+
 ;; Ring Middlewares. You should add below middlewares in your application.
 
 (defn wrap-locale
@@ -90,8 +92,8 @@
     (include-css "/lib/bootstrap/css/bootstrap.min.css")
     (include-css (format "/sweet-crossplane-%s.css" (.getLanguage dog-mission/*locale*)))]
    [:body
-    [:nav.navbar.navbar-default
-     [:div.container-fluid
+    [:header.navbar.navbar-default
+     [:nav.container-fluid
       [:div.navbar-header
        (link-to {:class "navbar-brand"} "/" @brand-name)]
       [:div.collapse.navbar-collapse
@@ -111,7 +113,6 @@
      [:div.container-fluid
       contents]]
     [:footer
-     [:hr]
      [:div.container-fluid
       [:p "Powered by Clojure, core.incubator, Logging, clojure.java.jdbc, clj-time, Compojure, Hiccup, PostgreSQL, jQuery, Bootstrap and sweet-crossplane."]]]
     (include-js "/lib/jquery/jquery.min.js")
@@ -136,7 +137,7 @@
 
 (defmethod search-condition-control :decimal
   [entity-key entity-schema property-key]
-  (let [[property-key-1 property-key-2] (map #(keyword (str (name %1) "-" %2)) (repeat property-key) (iterate inc 1))]
+  (let [[property-key-1 property-key-2] (map #(keyword (format "%s-%d--" (name %1) %2)) (repeat property-key) (iterate inc 1))]
     [:div.form-group
      (label property-key (string/capitalize (dog-mission/translate (radial-mount/property-message-key entity-key property-key))))
      (text-field {:class "form-control"}
