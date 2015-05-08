@@ -1,18 +1,20 @@
 (ns sweet-crossplane.core
-  (:require (clojure      [string   :as    string])
-            (clojure.java [jdbc     :as    jdbc])
-            (clout        [core     :as    clout])
-            (compojure    [core     :as    compojure]
-                          [response :as    compojure.response])
-            (dog-mission  [core     :as    dog-mission])
-            (hiccup       [core     :refer :all]
-                          [element  :refer :all]
-                          [form     :refer :all]
-                          [page     :refer :all])
-            (radial-mount [core     :as    radial-mount])
-            (twin-spar    [core     :as    twin-spar])
+  (:require (clojure      [string        :as    string])
+            (clojure.java [jdbc          :as    jdbc])
+            (clojure.math [combinatorics :as    combinatorics])
+            (clout        [core          :as    clout])
+            (compojure    [core          :as    compojure]
+                          [response      :as    compojure.response])
+            (dog-mission  [core          :as    dog-mission])
+            (hiccup       [core          :refer :all]
+                          [element       :refer :all]
+                          [form          :refer :all]
+                          [page          :refer :all])
+            (radial-mount [core          :as    radial-mount])
+            (twin-spar    [core          :refer :all])
             )
-  (:import  (java.util   Locale TimeZone)))
+  (:import  (java.text    ParseException)
+            (java.util    Locale TimeZone)))
 
 (dog-mission/conj-resource-bundle-namespace "sweet-crossplane.message")
 
@@ -48,6 +50,30 @@
                                                           location.href = document.getElementById(\"go-back-uri\").value;")])
                                  request))))
 
+(defn param-key
+  [entity-key property-key]
+  (radial-mount/property-message-key entity-key property-key))
+
+(declare entity-keys inputtable-property-keys parse-property-param)
+
+(defn wrap-entity-params
+  [handler]
+  (letfn [(assoc-entity-param [request param-key entity-key property-key]
+            (if-let [param-value (not-empty (get-in request [:params param-key]))]
+              (try
+                (assoc-in request [:entity-params param-key] (parse-property-param entity-key property-key param-value))
+                (catch ParseException _
+                  (update-in request [:entity-param-errors param-key] #(vec (conj % :has-the-wrong-format)))))))]
+    (fn [request]
+      (handler (reduce (fn [result entity-key]
+                         (reduce (fn [result [property-key param-key]]
+                                   (cond-> result
+                                     (.startsWith (name param-key) (name (sweet-crossplane.core/param-key entity-key property-key))) (#(or (assoc-entity-param % param-key entity-key property-key) %))))
+                                 result
+                                 (combinatorics/cartesian-product (inputtable-property-keys entity-key) (keys (:params request)))))
+                       request
+                       (entity-keys))))))
+
 (def ^:dynamic *request*
   nil)
 
@@ -77,6 +103,79 @@
   (reset! sweet-crossplane.core/database-spec   database-spec)
   (reset! sweet-crossplane.core/brand-name      brand-name)
   (reset! sweet-crossplane.core/layout          layout))
+
+(defn- entity-keys
+  []
+  (keys @database-schema))
+
+(defn- entity-schema
+  [entity-key]
+  (get @database-schema entity-key))
+
+(defn- inputtable-property-keys
+  [entity-key]
+  (->> (entity-schema entity-key)
+       ((juxt :columns :many-to-one-relationships))
+       (map keys)
+       (apply concat)))
+
+(defn- property-keys
+  [entity-key]
+  (concat (inputtable-property-keys entity-key)
+          (keys (:one-to-many-relationships (entity-schema entity-key)))))
+
+(defn- property-type
+  [entity-key property-key]
+  (let [entity-schema (entity-schema entity-key)]
+    (or (get-in entity-schema [:columns property-key :type])
+        (and (get-in entity-schema [:many-to-one-relationship property-key]) :many-to-one)
+        (and (get-in entity-schema [:one-to-many-relationship property-key]) :one-to-many))))
+
+(defmulti ^:private parse-property-param
+  (fn [entity-key property-key param-value] (property-type entity-key property-key)))
+
+(defmethod parse-property-param :integer
+  [_ _ param-value]
+  (.longValue (.parse (dog-mission/number-format) param-value)))
+
+(defmethod parse-property-param :decimal
+  [_ _ param-value]
+  (bigdec (.doubleValue (.parse (dog-mission/number-format) param-value))))
+
+(defmethod parse-property-param :boolean
+  [_ _ param-value]
+  (= param-value (dog-mission/translate :true)))
+
+(defmethod parse-property-param :date
+  [_ _ param-value]
+  (.parse (dog-mission/date-format) param-value))
+
+(defmethod parse-property-param :timestamp
+  [_ _ param-value]
+  (.parse (dog-mission/date-time-format) param-value))
+
+(defmethod parse-property-param :default
+  [_ _ param-value]
+  param-value)
+
+(defmulti ^:private format-property-param
+  (fn [entity-key property-key param-value] (property-type entity-key property-key)))
+
+(defmethod format-property-param :date
+  [_ _ param-value]
+  (if param-value
+    (.format (dog-mission/date-format) param-value)))
+
+(defmethod format-property-param :boolean
+  [_ _ param-value]
+  (if param-value
+    (dog-mission/translate :true)
+    (dog-mission/translate :false)))
+
+(defmethod format-property-param :default
+  [_ _ param-value]
+  (if param-value
+    (dog-mission/l10n-format param-value)))
 
 ;; Views.
 
@@ -108,7 +207,7 @@
           {:role "menu"}
           (map (fn [entity-key]
                  [:li (link-to (format "/%s" (name entity-key)) (string/capitalize (dog-mission/translate entity-key)))])
-               (keys @database-schema))]]]]]]
+               (entity-keys))]]]]]]
     [:article
      [:div.container-fluid
       contents]]
@@ -118,43 +217,58 @@
     (include-js "/lib/jquery/jquery.min.js")
     (include-js "/lib/bootstrap/bootstrap.min.js")]))
 
-(defn property-type
-  [entity-schema property-key]
-  (or (get-in entity-schema [:columns property-key :type])
-      (and (get-in entity-schema [:many-to-one-relationship property-key]) :many-to-one)
-      (and (get-in entity-schema [:one-to-many-relationship property-key]) :one-to-many)))
+(defmulti condition-control
+  (fn [entity-key property-key] (property-type entity-key property-key)))
 
-(defmulti search-condition-control
-  (fn [entity-key entity-schema property-key] (property-type entity-schema property-key)))
-
-(defmethod search-condition-control :string
-  [entity-key entity-schema property-key]
-  [:div.form-group
-   (label property-key (string/capitalize (dog-mission/translate (radial-mount/property-message-key entity-key property-key))))
-   (text-field {:class "form-control", :placeholder (get-in entity-schema [:placeholders property-key])}
-               property-key
-               (get-in *request* [:params property-key]))])
-
-(defmethod search-condition-control :decimal
-  [entity-key entity-schema property-key]
-  (let [[property-key-1 property-key-2] (map #(keyword (format "%s-%d--" (name %1) %2)) (repeat property-key) (iterate inc 1))]
+(defmethod condition-control :string
+  [entity-key property-key]
+  (let [param-key (param-key entity-key property-key)]
     [:div.form-group
-     (label property-key (string/capitalize (dog-mission/translate (radial-mount/property-message-key entity-key property-key))))
-     (text-field {:class "form-control"}
-                 property-key-1
-                 (get-in *request* [:params property-key-1]))
-     (string/capitalize (dog-mission/translate :-))
-     (text-field {:class "form-control"}
-                 property-key-2
-                 (get-in *request* [:params property-key-2]))]))
+     (label param-key (string/capitalize (dog-mission/translate param-key)))
+     (text-field
+      {:class "form-control", :placeholder (get-in (entity-schema entity-key) [:placeholders property-key])}
+      param-key
+      (format-property-param entity-key property-key (get-in *request* [:entity-params param-key])))]))
 
-(defmethod search-condition-control :default
-  [entity-key entity-schema property-key]
+(defn- number-condition-control
+  [entity-key property-key]
+  (let [param-key   (param-key entity-key property-key)
+        param-key-1 (keyword (format "%s-1--" (name param-key)))
+        param-key-2 (keyword (format "%s-2--" (name param-key)))
+        errors-1    (not-empty (get-in *request* [:entity-param-errors param-key-1]))
+        errors-2    (not-empty (get-in *request* [:entity-param-errors param-key-2]))]
+    (letfn [(text-field [param-key errors]
+              [:div
+               {:class (cond-> "form-group"
+                         errors (str " has-error has-feedback"))}
+               (hiccup.form/text-field
+                {:class "form-control"}
+                param-key
+                (if errors
+                  (get-in *request* [:params param-key])
+                  (format-property-param entity-key property-key (get-in *request* [:entity-params param-key]))))
+               (if errors
+                 [:span.glyphicon.glyphicon-remove.form-control-feedback])])]
+      (list
+       (label param-key (string/capitalize (dog-mission/translate param-key)))
+       (text-field param-key-1 errors-1)
+       (text-field param-key-2 errors-2)))))
+
+(defmethod condition-control :integer
+  [entity-key property-key]
+  (number-condition-control entity-key property-key))
+
+(defmethod condition-control :decimal
+  [entity-key property-key]
+  (number-condition-control entity-key property-key))
+
+(defmethod condition-control :default
+  [entity-key property-key]
   nil)
 
 (defn index-view
-  [entity-key {:keys [columns many-to-one-relationships] :as entity-schema} entities]
-  (@layout (dog-mission/translate :list-view-title (dog-mission/translate entity-key))
+  [entity-key entities]
+  (@layout (string/capitalize (dog-mission/translate :list-view-title (dog-mission/translate entity-key)))
            [:div.row
             [:div.col-md-3
              [:div.panel.panel-default
@@ -163,21 +277,48 @@
               [:div.panel-body
                (form-to
                 [:get (:uri *request*)]
-                (map (partial search-condition-control entity-key entity-schema) (concat (keys columns) (keys many-to-one-relationships)))
+                (map (partial condition-control entity-key) (inputtable-property-keys entity-key))
                 (submit-button {:class "btn btn-primary"} (string/capitalize (dog-mission/translate :search))))]]]
             [:div.col-md-9
-             [:p "List"]]]))
+             (map (fn [entity]
+                    [:p (:name entity)])
+                  entities)]]))
 
 ;; Controllers.
 
+(defmulti condition
+  (fn [entity-key property-key] (property-type entity-key property-key)))
+
+(defmethod condition :string
+  [entity-key property-key]
+  (let [param-key (param-key entity-key property-key)]
+    (if-let [param-value (get-in *request* [:entity-params param-key])]
+      ($like property-key (format "%%%s%%" param-value)))))
+
+(defmethod condition :decimal
+  [entity-key property-key]
+  (let [param-key (param-key entity-key property-key)]
+    (if-let [conditions (not-empty (keep identity [(if-let [param-value (get-in *request* [:entity-params (keyword (format "%s-1--" (name param-key)))])]
+                                                     ($>= property-key param-value))
+                                                   (if-let [param-value (get-in *request* [:entity-params (keyword (format "%s-2--" (name param-key)))])]
+                                                     ($<= property-key param-value))]))]
+      (apply $and conditions))))
+
+(defmethod condition :default
+  [entity-key property-key]
+  nil)
+
 (defn index-controller
-  [entity-key entity-schema uri-parameters]
+  [entity-key uri-parameters]
   (jdbc/with-db-transaction [transaction @database-spec]
-    (index-view entity-key entity-schema nil)))
+    (let [condition (if-let [conditions (not-empty (keep (partial condition entity-key) (inputtable-property-keys entity-key)))]
+                      (apply $and conditions))
+          database  (database @database-schema (database-data @database-schema transaction entity-key condition))]
+      (index-view entity-key (get-condition-matched-rows database entity-key)))))
 
 (defn new-controller
-  [entity-key entity-schema uri-parameters]
-  (@layout (dog-mission/translate :new-view-title (dog-mission/translate entity-key))
+  [entity-key uri-parameters]
+  (@layout (string/capitalize (dog-mission/translate :new-view-title (dog-mission/translate entity-key)))
            [:div
             [:p "new"]
             (form-to
@@ -185,13 +326,13 @@
              (submit-button "create"))]))
 
 (defn create-controller
-  [entity-key entity-schema uri-parameters]
-  (@layout (dog-mission/translate :create-view-title (dog-mission/translate entity-key))
+  [entity-key uri-parameters]
+  (@layout (string/capitalize (dog-mission/translate :create-view-title (dog-mission/translate entity-key)))
            [:p "create"]))
 
 (defn edit-controller
-  [entity-key entity-schema uri-parameters]
-  (@layout (dog-mission/translate :edit-view-title (dog-mission/translate entity-key))
+  [entity-key uri-parameters]
+  (@layout (string/capitalize (dog-mission/translate :edit-view-title (dog-mission/translate entity-key)))
            [:div
             [:p "edit"]
             (form-to
@@ -202,13 +343,13 @@
              (submit-button "destroy"))]))
 
 (defn update-controller
-  [entity-key entity-schema uri-parameters]
-  (@layout (dog-mission/translate :update-view-title (dog-mission/translate entity-key))
+  [entity-key uri-parameters]
+  (@layout (string/capitalize (dog-mission/translate :update-view-title (dog-mission/translate entity-key)))
            [:p "update"]))
 
 (defn destroy-controller
-  [entity-key entity-schema uri-parameters]
-  (@layout (dog-mission/translate :destroy-view-title (dog-mission/translate entity-key))
+  [entity-key uri-parameters]
+  (@layout (string/capitalize (dog-mission/translate :destroy-view-title (dog-mission/translate entity-key)))
            [:p "destroy"]))
 
 (defn process-request
@@ -222,14 +363,13 @@
                                                 (or (get-in request [:form-params      "_method"])
                                                     (get-in request [:multipart-params "_method"])))))
                   (clout/route-matches route request))))]
-      (some (fn [[entity-key entity-schema]]
-              (some (fn [[method path-format controller]]
-                      (if-let [uri-parameters (route-matches method (format path-format (name entity-key)))]
-                        (compojure.response/render (controller entity-key entity-schema uri-parameters) request)))
-                    [[:get    "/%s"           index-controller]
-                     [:get    "/%s/new"       new-controller]
-                     [:post   "/%s"           create-controller]
-                     [:get    "/%s/:key/edit" edit-controller]
-                     [:patch  "/%s/:key"      update-controller]
-                     [:delete "/%s/:key"      destroy-controller]]))
-            @database-schema))))
+      (some #(some (fn [[method path-format controller]]
+                     (if-let [uri-parameters (route-matches method (format path-format (name %)))]
+                       (compojure.response/render (controller % uri-parameters) request)))
+                   [[:get    "/%s"           index-controller]
+                    [:get    "/%s/new"       new-controller]
+                    [:post   "/%s"           create-controller]
+                    [:get    "/%s/:key/edit" edit-controller]
+                    [:patch  "/%s/:key"      update-controller]
+                    [:delete "/%s/:key"      destroy-controller]])
+            (entity-keys)))))
