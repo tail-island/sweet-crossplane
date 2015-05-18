@@ -9,7 +9,9 @@
   ],
   "dependencies": {
     "jquery": "*",
-    "bootstrap": "*"
+    "bootstrap": "*",
+    "eonasdan-bootstrap-datetimepicker": "*",
+    "jquery.bootgrid": "*"
   },
   "exportsOverride": {
     "jquery": {
@@ -19,6 +21,17 @@
       ".": "dist/js/*.min.*",
       "css": "dist/css/bootstrap.min.css",
       "fonts": "dist/fonts/*"
+    },
+    "moment": {
+      ".": "min/moment-with-locales.min.js"
+    },
+    "eonasdan-bootstrap-datetimepicker": {
+      ".": "build/js/*.min.*",
+      "css": "build/css/*.min.*"
+    },
+    "jquery.bootgrid": {
+      ".": "dist/*.min.js",
+      "css": "dist/*.min.css"
     }
   }
 }
