@@ -13,6 +13,7 @@
 
     setDefaults: function(options) {
       $.extend(true, $.crossplane, options);
+      return this;
     },
 
     hiddenField: function(name, val) {
@@ -71,7 +72,7 @@
       return $modal;
     },
 
-    showConfirm: function($element) {
+    getConfirmModal: function($element) {
       var $modal = $element.data('confirm-modal');
 
       if (!$modal) {
@@ -79,7 +80,11 @@
         $element.data('confirm-modal', $modal);
       }
 
-      $modal.modal('show');
+      return $modal;
+    },
+    
+    showConfirmModal: function($element) {
+      $.crossplane.getConfirmModal($element).modal('show');
       return this;
     }
   };
@@ -94,7 +99,7 @@
         return true;
       }
 
-      $.crossplane.showConfirm($(this));
+      $.crossplane.showConfirmModal($(this));
       return false;  // ダイアログの[Yes]ボタンが押されるまで待つために、とりあえず、イベントをキャンセルします。
     });
 
