@@ -247,12 +247,12 @@
     (include-js "/lib/moment/moment-with-locales.min.js")
     (include-js "/lib/eonasdan-bootstrap-datetimepicker/bootstrap-datetimepicker.min.js")
     (include-js "/sweet-crossplane.js")
-    (javascript-tag (<< "$.extend(true, $.crossplane, ~(json/write-str {:locale          (.getLanguage dog-mission/*locale*)
-                                                                        :dateFormat      (datetimepicker-date-format)
-                                                                        :timestampFormat (datetimepicker-timestamp-format)
-                                                                        :labels          {:confirm (string/capitalize (dog-mission/translate :confirm))
-                                                                                          :ok      (string/capitalize (dog-mission/translate :ok))
-                                                                                          :cancel  (string/capitalize (dog-mission/translate :cancel))}}))"))]
+    (javascript-tag (<< "$.crossplane.setDefaults(~(json/write-str {:locale          (.getLanguage dog-mission/*locale*)
+                                                                    :dateFormat      (datetimepicker-date-format)
+                                                                    :timestampFormat (datetimepicker-timestamp-format)
+                                                                    :labels          {:confirm (string/capitalize (dog-mission/translate :confirm))
+                                                                                      :yes     (string/capitalize (dog-mission/translate :yes))
+                                                                                      :no      (string/capitalize (dog-mission/translate :no))}}));"))]
    [:body
     [:header.navbar.navbar-default
      [:nav.container-fluid
@@ -371,9 +371,7 @@
   (letfn [(pager-item-control [class caption enable page]
             [:li {:class (cond-> class
                            (not enable) (str " disabled"))}
-             (if enable
-               (link-to-with-params (:uri *request*) (assoc (:query-params *request*) "page" page) caption)
-               [:span caption])])]
+             (link-to-with-params (:uri *request*) (assoc (:query-params *request*) "page" page) caption)])]
     [:ul.pager
      (pager-item-control "previous" (string/capitalize (dog-mission/translate :previous)) (> page 1)          (dec page))
      (pager-item-control "next"     (string/capitalize (dog-mission/translate :next))     (< page page-count) (inc page))]))
@@ -536,7 +534,7 @@
       (some #(some (fn [[method path-format controller]]
                      (if-let [uri-parameters (route-matches method (format path-format (name %)))]
                        (compojure.response/render (controller % uri-parameters) request)))
-                   [[:get    "/%s"           index-controller]
+                   [[:get    "/%s"           index-controller]  ; TODO: 画面生成を抑制するオプションを追加する。
                     [:get    "/%s/new"       new-controller]
                     [:post   "/%s"           create-controller]
                     [:get    "/%s/:key/edit" edit-controller]

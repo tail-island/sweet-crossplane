@@ -1,23 +1,24 @@
 (function($) {
 
   $.crossplane = {
-    datetimepickerSelector: 'div.date',
-    confirmSelector: 'a[data-confirm]',
-    
     locale: 'en',
     dateFormat: 'MMM D, YYYY',
     timstampFormat: 'MMM D, YYYY HH:MM:SS',
-    
+
     labels: {
       confirm: 'Confirm',
-      ok: 'OK',
-      cancel: 'Cancel',
+      yes: 'Yes',
+      no: 'No',
     },
-    
+
+    setDefaults: function(options) {
+      $.extend(true, $.crossplane, options);
+    },
+
     hiddenField: function(name, val) {
       return $('<input type="hidden">').attr('name', name).val(val);
     },
-    
+
     form: function(uri, method, params) {
       var $form = $('<form>').attr('action', uri);
 
@@ -39,23 +40,69 @@
       return this;
     },
 
-    confirm: function(message) {
-      return window.confirm(message);
+    confirmModal: function($element) {
+      var $modal = $('<div class="modal fade">' +
+                     '  <div class="modal-dialog">' +
+                     '    <div class="modal-content">' +
+                     '      <div class="modal-header">' +
+                     '        <button type="button" class="close" data-dismiss="modal">&times;</span></button>' +
+                     '        <h4 class="modal-title"></h4>' +
+                     '      </div>' +
+                     '      <div class="modal-body"></div>' +
+                     '      <div class="modal-footer">' +
+                     '        <button class="btn modal-yes"></button>' +
+                     '        <button class="btn modal-no" data-dismiss="modal"></button>' +
+                     '      </div>' +
+                     '    </div>' +
+                     '  </div>' +
+                     '</div>');
+
+      $modal.find('.modal-title').text($.crossplane.labels.confirm);
+      $modal.find('.modal-body' ).text($element.data('confirm'));
+      $modal.find('.modal-yes'  ).text($.crossplane.labels.yes);
+      $modal.find('.modal-no'   ).text($.crossplane.labels.no);
+
+      $modal.find('.modal-yes').on('click', function() {
+        $element.data('confirm', null);
+
+        $element[0].click();  // jQueryのtrigger('click')だと画面遷移しなかったので、DOMのclick()を呼び出しています。
+      });
+
+      return $modal;
+    },
+
+    showConfirm: function($element) {
+      var $modal = $element.data('confirm-modal');
+
+      if (!$modal) {
+        $modal = $.crossplane.confirmModal($element);
+        $element.data('confirm-modal', $modal);
+      }
+
+      $modal.modal('show');
+      return this;
     }
   };
 
   $(function() {
-    $($.crossplane.datetimepickerSelector).each(function() {
+    $('li.disabled a').on('click', function() {
+      return false;
+    });
+
+    $('a').on('click', function() {
+      if (!$(this).data('confirm')) {
+        return true;
+      }
+
+      $.crossplane.showConfirm($(this));
+      return false;  // ダイアログの[Yes]ボタンが押されるまで待つために、とりあえず、イベントをキャンセルします。
+    });
+
+    $('div.date').each(function() {
       $(this).datetimepicker({
         locale: $.crossplane.locale,
         format: $(this).data('type') === 'date' ? $.crossplane.dateFormat : $.crossplane.timestampFormat
       });
-    });
-    
-    $($.crossplane.confirmSelector).on('click', function(event) {
-      if (!$.crossplane.confirm('Are you sure?')) {
-        event.preventDefault();
-      }
     });
   });
 
