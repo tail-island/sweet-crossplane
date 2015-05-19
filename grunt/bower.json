@@ -10,8 +10,7 @@
   "dependencies": {
     "jquery": "*",
     "bootstrap": "*",
-    "eonasdan-bootstrap-datetimepicker": "*",
-    "jquery.bootgrid": "*"
+    "eonasdan-bootstrap-datetimepicker": "*"
   },
   "exportsOverride": {
     "jquery": {
@@ -28,10 +27,6 @@
     "eonasdan-bootstrap-datetimepicker": {
       ".": "build/js/*.min.*",
       "css": "build/css/*.min.*"
-    },
-    "jquery.bootgrid": {
-      ".": "dist/*.min.js",
-      "css": "dist/*.min.css"
     }
   }
 }

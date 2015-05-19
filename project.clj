@@ -6,6 +6,7 @@
   :dependencies [[org.clojure/clojure            "1.6.0"]
                  [org.clojure/core.incubator     "0.1.3"]
                  [org.clojure/data.codec         "0.1.0"]
+                 [org.clojure/data.json          "0.2.6"]
                  [org.clojure/math.combinatorics "0.1.1"]
                  [clj-time                       "0.9.0"]
                  [compojure                      "1.3.3"]
