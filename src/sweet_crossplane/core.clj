@@ -461,7 +461,7 @@
   (jdbc/with-db-transaction [transaction @database-spec]
     (apply index-view
       entity-key
-      (if (= (get-in *request* [:params :command]) "search")
+      (if (and (= (get-in *request* [:params :command]) "search") (empty? (:entity-param-errors *request*)))
         (let [pages      (->> (-> (->> (if-let [conditions (not-empty (keep (partial condition entity-key) (inputtable-property-keys entity-key)))]
                                          (apply $and conditions))
                                        (database-data @database-schema transaction entity-key)

@@ -106,7 +106,9 @@
     $('div.date').each(function() {
       $(this).datetimepicker({
         locale: $.crossplane.locale,
-        format: $(this).data('type') === 'date' ? $.crossplane.dateFormat : $.crossplane.timestampFormat
+        format: $(this).data('type') === 'date' ? $.crossplane.dateFormat : $.crossplane.timestampFormat,
+        useStrict: true,
+        keepInvalid: true
       });
     });
   });
