@@ -210,7 +210,7 @@
 
 (defmethod format-property-param :one-to-many
   [_ _ param-value]
-  (string/join ", " (map :name param-value)))
+  (string/join (dog-mission/translate :comma) (map :name param-value)))
 
 (defmethod format-property-param :default
   [_ _ param-value]
@@ -404,7 +404,8 @@
                        (map (fn [entity]
                               [:tr
                                (map (fn [property-key]
-                                      [:td (format-property-param entity-key property-key (get entity property-key))])
+                                      [:td
+                                       [:div (format-property-param entity-key property-key (get entity property-key))]])
                                     (list-property-keys entity-key))
                                [:td.command-cell
                                 (link-to-with-method-and-params {:class "btn btn-primary btn-xs"} (<< "/~(name entity-key)/~(:key entity)/edit") :get {:index-params (base64-encode (:query-params *request*))} [:span.glyphicon.glyphicon-pencil])

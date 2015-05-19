@@ -1,7 +1,13 @@
-.table {
+table.table {
   margin-bottom: 0;
 }
 
-.command-cell {
-  text-align: right;
+table.table td > div {
+  max-height:    8em;
+  overflow:      hidden;
+}
+
+table.table td.command-cell {
+  text-align:    right;
+  white-space:   nowrap;
 }
