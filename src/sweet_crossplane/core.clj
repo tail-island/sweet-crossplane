@@ -18,7 +18,8 @@
                                 [util          :refer :all])
             (radial-mount       [core          :as    radial-mount])
             (twin-spar          [core          :refer :all]))
-  (:import  (java.text          ParseException)
+  (:import  (java.net           URLEncoder)
+            (java.text          ParseException)
             (java.util          Locale TimeZone UUID)))
 
 (dog-mission/conj-resource-bundle-namespace "sweet-crossplane.message")
@@ -95,6 +96,15 @@
   [encoded]
   (read-string (String. (base64/decode (.getBytes encoded "US-ASCII")) "UTF-16")))
 
+(def ^:dynamic *transaction*
+  nil)
+
+(defmacro with-db-transaction'
+  [& body]
+  `(jdbc/with-db-transaction [transaction# @database-spec]
+     (binding [*transaction* transaction#]
+       ~@body)))
+
 ;; Initializing.
 
 (def ^:private database-schema
@@ -137,6 +147,11 @@
   [entity-key]
   (concat (inputtable-property-keys entity-key)
           (keys (:one-to-many-relationships (entity-schema entity-key)))))
+
+(defn- search-condition-property-keys
+  [entity-key]
+  (or (get-in (entity-schema entity-key) [:search-condition :properties])
+      (inputtable-property-keys entity-key)))
 
 (defn- list-property-keys
   [entity-key]
@@ -181,7 +196,7 @@
 
 (defmethod parse-property-param :boolean
   [_ _ param-value]
-  (= param-value (dog-mission/translate :true)))
+  (= param-value (string/capitalize (dog-mission/translate :true))))
 
 (defmethod parse-property-param :date
   [_ _ param-value]
@@ -212,9 +227,10 @@
 
 (defmethod format-property-param :boolean
   [_ _ param-value]
-  (if param-value
-    (dog-mission/translate :true)
-    (dog-mission/translate :false)))
+  (case param-value
+    true  (string/capitalize (dog-mission/translate :true))
+    false (string/capitalize (dog-mission/translate :false))
+    ""))
 
 (defn- format-relationship-property-param
   [entity-key property-key param-value]
@@ -262,7 +278,7 @@
     (include-css "/lib/bootstrap/css/bootstrap.min.css")
     (include-css "/lib/eonasdan-bootstrap-datetimepicker/css/bootstrap-datetimepicker.min.css")
     (include-css "/sweet-crossplane.css")
-    (include-css (format "/sweet-crossplane-%s.css" (.getLanguage dog-mission/*locale*)))
+    (include-css (<< "/sweet-crossplane-~(.getLanguage dog-mission/*locale*).css"))
     (include-js "/lib/jquery/jquery.min.js")
     (include-js "/lib/bootstrap/bootstrap.min.js")
     (include-js "/lib/moment/moment-with-locales.min.js")
@@ -290,7 +306,7 @@
          [:ul.dropdown-menu
           {:role "menu"}
           (map (fn [entity-key]
-                 [:li (link-to (format "/%s" (name entity-key)) (string/capitalize (dog-mission/translate entity-key)))])
+                 [:li (link-to (<< "/~(name entity-key)") (string/capitalize (dog-mission/translate entity-key)))])
                (entity-keys))]]]]]]
     [:article
      [:div.container-fluid
@@ -299,10 +315,14 @@
      [:div.container-fluid
       [:p "Powered by Clojure, core.incubator, data.codec, data.json, math.combinatorics, Logging, clojure.java.jdbc, clj-time, Compojure, Hiccup, PostgreSQL, jQuery, Bootstrap, Bootstrap 3 Datepicker and sweet-crossplane."]]]]))
 
+(defelem link-to-javascript
+  [javascript & content]
+  [:a {:href (<< "javascript: ~{javascript}")}
+   content])
+
 (defelem link-to-with-method-and-params
   [uri method params & content]
-  [:a {:href (<< "javascript: $.crossplane.goToWithMethodAndParams(\"~(to-uri uri)\", \"~(name method)\", ~(json/write-str params))")}
-   content])
+  (apply link-to-javascript (<< "$.crossplane.goToWithMethodAndParams(\"~(to-uri uri)\", \"~(name method)\", ~(json/write-str params))") content))
 
 (defelem link-to-with-params
   [uri params & content]
@@ -311,15 +331,20 @@
 (defmulti condition-control
   (fn [entity-key property-key] (property-type entity-key property-key)))
 
-(defmethod condition-control :string
+(defn- string-condition-control
   [entity-key property-key]
   (let [param-key (param-key entity-key property-key)]
     [:div.form-group
      (label param-key (string/capitalize (dog-mission/translate param-key)))
-     (text-field
-      {:class "form-control", :placeholder (get-in (entity-schema entity-key) [:placeholders property-key])}
-      param-key
-      (format-property-param entity-key property-key (get-in *request* [:entity-params param-key])))]))
+     (text-field {:class "form-control", :placeholder (get-in (entity-schema entity-key) [:placeholders property-key])} param-key (format-property-param entity-key property-key (get-in *request* [:entity-params param-key])))]))
+
+(defmethod condition-control :string
+  [entity-key property-key]
+  (string-condition-control entity-key property-key))
+
+(defmethod condition-control :text
+  [entity-key property-key]
+  (string-condition-control entity-key property-key))
 
 (defn- number-condition-control
   [entity-key property-key]
@@ -350,6 +375,17 @@
 (defmethod condition-control :decimal
   [entity-key property-key]
   (number-condition-control entity-key property-key))
+
+(defmethod condition-control :boolean
+  [entity-key property-key]
+  (let [param-key (param-key entity-key property-key)]
+    [:div.form-group
+     (label param-key (string/capitalize (dog-mission/translate param-key)))
+     (drop-down
+      {:class "form-control"}
+      param-key
+      (cons "" (map (partial format-property-param entity-key property-key) [true false]))
+      (format-property-param entity-key property-key (get-in *request* [:entity-params param-key])))]))
 
 (defn- date-time-condition-control
   [entity-key property-key type]
@@ -392,7 +428,7 @@
      (hidden-field param-key (get-in *request* [:entity-params param-key]))
      [:div.input-group
       (text-field {:class "form-control", :readonly "true"} param-name-key (format-property-param entity-key property-key (get-in *request* [:entity-params param-name-key])))
-      [:span.input-group-addon {:data-open-window-uri (to-uri (format "/%s/select?target-element-id=%s" (name (get-in (entity-schema entity-key) [:many-to-one-relationships property-key :table-key])) (name param-key)))}
+      [:span.input-group-addon {:data-open-window-uri (to-uri (<< "/~(name (get-in (entity-schema entity-key) [:many-to-one-relationships property-key :table-key]))/select?target-element-id=~(URLEncoder/encode (name param-key))"))}
        [:span.glyphicon.glyphicon-search]]]]))
 
 (defmethod condition-control :default
@@ -409,100 +445,97 @@
      (pager-item-control "previous" (string/capitalize (dog-mission/translate :previous)) (> page 1)          (dec page))
      (pager-item-control "next"     (string/capitalize (dog-mission/translate :next))     (< page page-count) (inc page))]))
 
+(defn- search-condition-panel
+  [entity-key & [params]]
+  [:div.panel.panel-default
+   [:div.panel-heading
+    [:div.panel-title (string/capitalize (dog-mission/translate :search-condition))]]
+   [:div.panel-body
+    (form-to
+     [:get (:uri *request*)]
+     (hidden-field :page "1")
+     (map (fn [[param-name param-value]]
+            (hidden-field param-name param-value))
+          params)
+     (map (partial condition-control entity-key) (search-condition-property-keys entity-key))
+     [:button.btn.btn-primary {:type "submit", :name :command, :value "search"}
+      (string/capitalize (dog-mission/translate :search))])]])
+
+(defn- list-entities-panel
+  [entity-key entities page-count page entity-command-fn command-fn]
+  (if entities
+    (list [:table.table.table-condensed.table-hover
+           [:thead
+            [:tr
+             (map (fn [property-key]
+                    [:th (string/capitalize (dog-mission/translate (param-key entity-key property-key)))])
+                  (list-property-keys entity-key))
+             [:th]]]
+           [:tbody
+            (map (fn [entity]
+                   [:tr
+                    (map (fn [property-key]
+                           [:td
+                            [:div (format-property-param entity-key property-key (get entity property-key))]])
+                         (list-property-keys entity-key))
+                    [:td.command-cell
+                     (entity-command-fn entity)]])
+                 entities)]]
+          (pager-control page-count page)
+          [:p (command-fn)])))
+
 (defn index-view
   [entity-key & [entities page-count page]]
   (@layout (string/capitalize (dog-mission/translate :list-view-title (dog-mission/translate entity-key)))
            [:div.row
-            [:div.col-md-3
-             [:div.panel.panel-default
-              [:div.panel-heading
-               [:div.panel-title (string/capitalize (dog-mission/translate :search-condition))]]
-              [:div.panel-body
-               (form-to
-                [:get (:uri *request*)]
-                (hidden-field :page "1")
-                (map (partial condition-control entity-key) (inputtable-property-keys entity-key))
-                [:button.btn.btn-primary {:type "submit", :name :command, :value "search"}
-                 (string/capitalize (dog-mission/translate :search))])]]]
-            [:div.col-md-9
-             (if entities
-               (list [:table.table.table-condensed.table-hover
-                      [:thead
-                       [:tr
-                        (map (fn [property-key]
-                               [:th (string/capitalize (dog-mission/translate (param-key entity-key property-key)))])
-                             (list-property-keys entity-key))
-                        [:th]]]
-                      [:tbody
-                       (map (fn [entity]
-                              [:tr
-                               (map (fn [property-key]
-                                      [:td
-                                       [:div (format-property-param entity-key property-key (get entity property-key))]])
-                                    (list-property-keys entity-key))
-                               [:td.command-cell
-                                (link-to-with-method-and-params {:class "btn btn-primary btn-xs"} (<< "/~(name entity-key)/~(:key entity)/edit") :get {:index-params (base64-encode (:query-params *request*))} [:span.glyphicon.glyphicon-pencil])
-                                "&nbsp;"
-                                (link-to-with-method-and-params {:class "btn btn-danger btn-xs", :data-confirm (string/capitalize (dog-mission/translate :are-you-sure?))} (<< "/~(name entity-key)/~(:key entity)") :delete {:index-params (base64-encode (:query-params *request*))} [:span.glyphicon.glyphicon-trash])]])
-                            entities)]]
-                     (pager-control page-count page)
-                     [:p
-                      (link-to-with-method-and-params {:class "btn btn-primary"} (<< "/~(name entity-key)/new") :get {:index-params (base64-encode (:query-params *request*))} (string/capitalize (dog-mission/translate :new)))]))]]))
+            [:div.col-md-3 (search-condition-panel entity-key)]
+            [:div.col-md-9 (list-entities-panel    entity-key entities page-count page
+                                                   (fn [entity]
+                                                     (list (link-to-with-method-and-params
+                                                            {:class "btn btn-primary btn-xs"} (<< "/~(name entity-key)/~(:key entity)/edit") :get {:index-params (base64-encode (:query-params *request*))}
+                                                            [:span.glyphicon.glyphicon-pencil])
+                                                           "&nbsp;"
+                                                           (link-to-with-method-and-params
+                                                            {:class "btn btn-danger btn-xs", :data-confirm (string/capitalize (dog-mission/translate :are-you-sure?))} (<< "/~(name entity-key)/~(:key entity)") :delete {:index-params (base64-encode (:query-params *request*))}
+                                                            [:span.glyphicon.glyphicon-trash])))
+                                                   (fn []
+                                                     (link-to-with-method-and-params {:class "btn btn-primary"} (<< "/~(name entity-key)/new") :get {:index-params (base64-encode (:query-params *request*))} (string/capitalize (dog-mission/translate :new)))))]]))
 
 (defn select-view
   [entity-key & [entities page-count page]]
-  (@layout (string/capitalize (dog-mission/translate :select-view-title (dog-mission/translate entity-key)))
-           [:div.row
-            [:div.col-md-3
-             [:div.panel.panel-default
-              [:div.panel-heading
-               [:div.panel-title (string/capitalize (dog-mission/translate :search-condition))]]
-              [:div.panel-body
-               (form-to
-                [:get (:uri *request*)]
-                (hidden-field :page "1")
-                (hidden-field :target-element-id (get-in *request* [:params :target-element-id]))
-                (map (partial condition-control entity-key) (inputtable-property-keys entity-key))
-                [:button.btn.btn-primary {:type "submit", :name :command, :value "search"}
-                 (string/capitalize (dog-mission/translate :search))])]]]
-            [:div.col-md-9
-             (if entities
-               (let [target-element-id           (get-in *request* [:params :target-element-id])
-                     representative-property-key (representative-property-key entity-key)]
-                 (list [:table.table.table-condensed.table-hover
-                        [:thead
-                         [:tr
-                          (map (fn [property-key]
-                                 [:th (string/capitalize (dog-mission/translate (param-key entity-key property-key)))])
-                               (list-property-keys entity-key))
-                          [:th]]]
-                        [:tbody
-                         (map (fn [entity]
-                                [:tr
-                                 (map (fn [property-key]
-                                        [:td
-                                         [:div (format-property-param entity-key property-key (get entity property-key))]])
-                                      (list-property-keys entity-key))
-                                 [:td.command-cell
-                                  [:a.btn.btn-primary.btn-xs {:href (<< "javascript: $.crossplane.setOpenerSelectProperty('~{target-element-id}', '~(:key entity)', '~(format-property-param entity-key representative-property-key (get entity representative-property-key))'); window.close()")}
-                                   [:span.glyphicon.glyphicon-link]]]])
-                              entities)]]
-                       (pager-control page-count page)
-                       [:p
-                        [:a.btn.btn-default {:href (<< "javascript: $.crossplane.setOpenerSelectProperty('~{target-element-id}', '', ''); window.close()")} (string/capitalize (dog-mission/translate :select-nothing))]
-                        "&nbsp;"
-                        [:a.btn.btn-primary {:href "javascript: window.close()"} (string/capitalize (dog-mission/translate :cancel))]])))]]))
+  (let [target-element-id           (get-in *request* [:params :target-element-id])
+        representative-property-key (representative-property-key entity-key)]
+    (@layout (string/capitalize (dog-mission/translate :select-view-title (dog-mission/translate entity-key)))
+             [:div.row
+              [:div.col-md-3 (search-condition-panel entity-key {:target-element-id (get-in *request* [:params :target-element-id])})]
+              [:div.col-md-9 (list-entities-panel    entity-key entities page-count page
+                                                     (fn [entity]
+                                                       (link-to-javascript
+                                                        {:class "btn btn-primary btn-xs"} (<< "$.crossplane.setOpenerSelectProperty('~{target-element-id}', '~(:key entity)', '~(format-property-param entity-key representative-property-key (get entity representative-property-key))'); window.close()")
+                                                        [:span.glyphicon.glyphicon-link]))
+                                                     (fn []
+                                                       (let [target-element-id (get-in *request* [:params :target-element-id])]
+                                                         (list (link-to-javascript {:class "btn btn-default"} (<< "$.crossplane.setOpenerSelectProperty('~{target-element-id}', '', ''); window.close()") (string/capitalize (dog-mission/translate :select-nothing)))
+                                                               "&nbsp;"
+                                                               (link-to-javascript {:class "btn btn-default"} "window.close()" (string/capitalize (dog-mission/translate :cancel)))))))]])))
 
 ;; Controllers.
 
 (defmulti condition
   (fn [entity-key property-key] (property-type entity-key property-key)))
 
+(defn- string-condition
+  [entity-key property-key]
+  (if-let [param-value (get-in *request* [:entity-params (param-key entity-key property-key)])]
+    ($like property-key (format "%%%s%%" param-value))))
+
 (defmethod condition :string
   [entity-key property-key]
-  (let [param-key (param-key entity-key property-key)]
-    (if-let [param-value (get-in *request* [:entity-params param-key])]
-      ($like property-key (format "%%%s%%" param-value)))))
+  (string-condition entity-key property-key))
+
+(defmethod condition :text
+  [entity-key property-key]
+  (string-condition entity-key property-key))
 
 (defn- range-condition
   [entity-key property-key]
@@ -521,6 +554,14 @@
   [entity-key property-key]
   (range-condition entity-key property-key))
 
+(defmethod condition :boolean
+  [entity-key property-key]
+  (let [param-value (get-in *request* [:entity-params (param-key entity-key property-key)])]
+    (if-not (nil? param-value)
+      (if param-value
+        property-key
+        ($not property-key)))))
+
 (defmethod condition :date
   [entity-key property-key]
   (range-condition entity-key property-key))
@@ -531,70 +572,51 @@
 
 (defmethod condition :many-to-one
   [entity-key property-key]
-  (let [param-key (param-key entity-key property-key)]
-    (if-let [param-value (get-in *request* [:entity-params (keyword (format "%s-key" (name param-key)))])]
-      ($= (keyword (format "%s-key" (name property-key))) param-value))))
+  (if-let [param-value (get-in *request* [:entity-params (keyword (format "%s-key" (name (param-key entity-key property-key))))])]
+    ($= (many-to-one-relationship-key-to-physical-column-key property-key) param-value)))
 
 (defmethod condition :default
   [entity-key property-key]
   nil)
 
+(defn- get-condition-matched-entities
+  [entity-key]
+  (if (and (= (get-in *request* [:params :command]) "search") (empty? (:entity-param-errors *request*)))
+    (let [pages      (->> (-> (->> (if-let [conditions (not-empty (keep (partial condition entity-key) (search-condition-property-keys entity-key)))]
+                                     (apply $and conditions))
+                                   (database-data @database-schema *transaction* entity-key)
+                                   (database      @database-schema))
+                              (get-condition-matched-rows entity-key))
+                          ((apply partial sort-by (sort-keyfn-and-comp entity-key)))
+                          (partition-all 20)
+                          (not-empty))
+          page-count (count pages)
+          page       (let [request-page (Integer/parseInt (or (get-in *request* [:params :page]) "1"))]
+                       (cond->> request-page
+                         (> request-page page-count) ((constantly page-count))
+                         (< request-page 1)          ((constantly 1))))]
+      [(if (empty? pages)
+         []
+         (nth pages (dec page)))
+       page-count
+       page])))
+
 (defn index-controller
   [entity-key uri-parameters]
-  (jdbc/with-db-transaction [transaction @database-spec]
-    (apply index-view
-      entity-key
-      (if (and (= (get-in *request* [:params :command]) "search") (empty? (:entity-param-errors *request*)))
-        (let [pages      (->> (-> (->> (if-let [conditions (not-empty (keep (partial condition entity-key) (inputtable-property-keys entity-key)))]
-                                         (apply $and conditions))
-                                       (database-data @database-schema transaction entity-key)
-                                       (database      @database-schema))
-                                  (get-condition-matched-rows entity-key))
-                              ((apply partial sort-by (sort-keyfn-and-comp entity-key)))
-                              (partition-all 20)
-                              (not-empty))
-              page-count (count pages)
-              page       (let [request-page (Integer/parseInt (or (get-in *request* [:params :page]) "1"))]
-                           (cond->> request-page
-                             (> request-page page-count) ((constantly page-count))
-                             (< request-page 1)          ((constantly 1))))]
-          [(if (empty? pages)
-             []
-             (nth pages (dec page)))
-           page-count
-           page])))))
+  (with-db-transaction'
+    (apply index-view entity-key (get-condition-matched-entities entity-key))))
 
 (defn select-controller
   [entity-key uri-parameters]
-  (jdbc/with-db-transaction [transaction @database-spec]
-    (apply select-view
-      entity-key
-      (if (and (= (get-in *request* [:params :command]) "search") (empty? (:entity-param-errors *request*)))
-        (let [pages      (->> (-> (->> (if-let [conditions (not-empty (keep (partial condition entity-key) (inputtable-property-keys entity-key)))]
-                                         (apply $and conditions))
-                                       (database-data @database-schema transaction entity-key)
-                                       (database      @database-schema))
-                                  (get-condition-matched-rows entity-key))
-                              ((apply partial sort-by (sort-keyfn-and-comp entity-key)))
-                              (partition-all 20)
-                              (not-empty))
-              page-count (count pages)
-              page       (let [request-page (Integer/parseInt (or (get-in *request* [:params :page]) "1"))]
-                           (cond->> request-page
-                             (> request-page page-count) ((constantly page-count))
-                             (< request-page 1)          ((constantly 1))))]
-          [(if (empty? pages)
-             []
-             (nth pages (dec page)))
-           page-count
-           page])))))
+  (with-db-transaction'
+    (apply select-view entity-key (get-condition-matched-entities entity-key))))
 
 (defn new-controller
   [entity-key uri-parameters]
   (@layout (string/capitalize (dog-mission/translate :new-view-title (dog-mission/translate entity-key)))
            (list [:p "new"]
                  (form-to
-                  [:post (format "/%s" (name entity-key))]
+                  [:post (<< "/~(name entity-key)")]
                   (hidden-field :index-params (get-in *request* [:params :index-params]))
                   (submit-button "create"))
                  (link-to-with-method-and-params {:class "btn btn-default"} (<< "/~(name entity-key)") :get (base64-decode (get-in *request* [:params :index-params])) (string/capitalize (dog-mission/translate :back))))))
@@ -610,7 +632,7 @@
   (@layout (string/capitalize (dog-mission/translate :edit-view-title (dog-mission/translate entity-key)))
            (list [:p "edit"]
                  (form-to
-                  [:patch  (format "/%s/%s" (name entity-key) (:key uri-parameters))]
+                  [:patch  (<< "/~(name entity-key)/~(:key uri-parameters)")]
                   (hidden-field :index-params (get-in *request* [:params :index-params]))
                   (submit-button "update"))
                  (link-to-with-method-and-params {:class "btn btn-default"} (<< "/~(name entity-key)") :get (base64-decode (get-in *request* [:params :index-params])) (string/capitalize (dog-mission/translate :back))))))
@@ -643,7 +665,7 @@
       (some #(some (fn [[method path-format controller]]
                      (if-let [uri-parameters (route-matches method (format path-format (name %)))]
                        (compojure.response/render (controller % uri-parameters) request)))
-                   [[:get    "/%s"           index-controller]  ; TODO: 画面生成を抑制するオプションを追加する。
+                   [[:get    "/%s"           index-controller]  ; TODO: 画面生成を抑制するオプションを追加する。毎回うまいこと上書きできるとは限らないため。
                     [:get    "/%s/select"    select-controller]
                     [:get    "/%s/new"       new-controller]
                     [:post   "/%s"           create-controller]
