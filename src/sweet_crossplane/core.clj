@@ -17,11 +17,9 @@
                                 [page          :refer :all]
                                 [util          :refer :all])
             (radial-mount       [core          :as    radial-mount])
-            (twin-spar          [core          :refer :all])
-            )
-  (:import  (java.net           URLEncoder)
-            (java.text          ParseException)
-            (java.util          Locale TimeZone)))
+            (twin-spar          [core          :refer :all]))
+  (:import  (java.text          ParseException)
+            (java.util          Locale TimeZone UUID)))
 
 (dog-mission/conj-resource-bundle-namespace "sweet-crossplane.message")
 
@@ -156,6 +154,13 @@
   (or (:representative (entity-schema entity-key))
       :name))
 
+(defn- property-schema
+  [entity-key property-key]
+  (let [entity-schema (entity-schema entity-key)]
+    (or (get-in entity-schema [:columns                   property-key])
+        (get-in entity-schema [:many-to-one-relationships property-key])
+        (get-in entity-schema [:one-to-many-relationships property-key]))))
+
 (defn- property-type
   [entity-key property-key]
   (let [entity-schema (entity-schema entity-key)]
@@ -186,6 +191,13 @@
   [_ _ param-value]
   (time.coerce/from-date (.parse (dog-mission/date-time-format) param-value)))
 
+(defmethod parse-property-param :many-to-one
+  [_ _ param-value]
+  (try
+    (UUID/fromString param-value)
+    (catch IllegalArgumentException _
+      param-value)))
+
 (defmethod parse-property-param :default
   [_ _ param-value]
   param-value)
@@ -204,13 +216,22 @@
     (dog-mission/translate :true)
     (dog-mission/translate :false)))
 
+(defn- format-relationship-property-param
+  [entity-key property-key param-value]
+  (if param-value
+    (if (map? param-value)
+      (let [entity-key   (:table-key (property-schema entity-key property-key))
+            property-key (representative-property-key entity-key)]
+        (format-property-param entity-key property-key (get param-value property-key)))
+      (dog-mission/l10n-format param-value))))
+
 (defmethod format-property-param :many-to-one
-  [_ _ param-value]
-  (:name param-value))
+  [entity-key property-key param-value]
+  (format-relationship-property-param entity-key property-key param-value))
 
 (defmethod format-property-param :one-to-many
-  [_ _ param-value]
-  (string/join (dog-mission/translate :comma) (map :name param-value)))
+  [entity-key property-key param-value]
+  (string/join (dog-mission/translate :comma) (map (partial format-relationship-property-param entity-key property-key) param-value)))
 
 (defmethod format-property-param :default
   [_ _ param-value]
@@ -279,13 +300,13 @@
       [:p "Powered by Clojure, core.incubator, data.codec, data.json, math.combinatorics, Logging, clojure.java.jdbc, clj-time, Compojure, Hiccup, PostgreSQL, jQuery, Bootstrap, Bootstrap 3 Datepicker and sweet-crossplane."]]]]))
 
 (defelem link-to-with-method-and-params
-  [url method params & content]
-  [:a {:href (<< "javascript: $.crossplane.goToWithMethodAndParams(\"~(to-uri url)\", \"~(name method)\", ~(json/write-str params))")}
+  [uri method params & content]
+  [:a {:href (<< "javascript: $.crossplane.goToWithMethodAndParams(\"~(to-uri uri)\", \"~(name method)\", ~(json/write-str params))")}
    content])
 
 (defelem link-to-with-params
-  [url params & content]
-  (apply link-to-with-method-and-params url :get params content))
+  [uri params & content]
+  (apply link-to-with-method-and-params uri :get params content))
 
 (defmulti condition-control
   (fn [entity-key property-key] (property-type entity-key property-key)))
@@ -362,6 +383,18 @@
   [entity-key property-key]
   (date-time-condition-control entity-key property-key :timestamp))
 
+(defmethod condition-control :many-to-one
+  [entity-key property-key]
+  (let [param-key      (keyword (format "%s-key"    (name (param-key entity-key property-key))))
+        param-name-key (keyword (format "%s-name--" (name param-key)))]
+    [:div.form-group
+     (label param-key (string/capitalize (dog-mission/translate param-key)))
+     (hidden-field param-key (get-in *request* [:entity-params param-key]))
+     [:div.input-group
+      (text-field {:class "form-control", :readonly "true"} param-name-key (format-property-param entity-key property-key (get-in *request* [:entity-params param-name-key])))
+      [:span.input-group-addon {:data-open-window-uri (to-uri (format "/%s/select?target-element-id=%s" (name (get-in (entity-schema entity-key) [:many-to-one-relationships property-key :table-key])) (name param-key)))}
+       [:span.glyphicon.glyphicon-search]]]]))
+
 (defmethod condition-control :default
   [entity-key property-key]
   nil)
@@ -416,6 +449,50 @@
                      [:p
                       (link-to-with-method-and-params {:class "btn btn-primary"} (<< "/~(name entity-key)/new") :get {:index-params (base64-encode (:query-params *request*))} (string/capitalize (dog-mission/translate :new)))]))]]))
 
+(defn select-view
+  [entity-key & [entities page-count page]]
+  (@layout (string/capitalize (dog-mission/translate :select-view-title (dog-mission/translate entity-key)))
+           [:div.row
+            [:div.col-md-3
+             [:div.panel.panel-default
+              [:div.panel-heading
+               [:div.panel-title (string/capitalize (dog-mission/translate :search-condition))]]
+              [:div.panel-body
+               (form-to
+                [:get (:uri *request*)]
+                (hidden-field :page "1")
+                (hidden-field :target-element-id (get-in *request* [:params :target-element-id]))
+                (map (partial condition-control entity-key) (inputtable-property-keys entity-key))
+                [:button.btn.btn-primary {:type "submit", :name :command, :value "search"}
+                 (string/capitalize (dog-mission/translate :search))])]]]
+            [:div.col-md-9
+             (if entities
+               (let [target-element-id           (get-in *request* [:params :target-element-id])
+                     representative-property-key (representative-property-key entity-key)]
+                 (list [:table.table.table-condensed.table-hover
+                        [:thead
+                         [:tr
+                          (map (fn [property-key]
+                                 [:th (string/capitalize (dog-mission/translate (param-key entity-key property-key)))])
+                               (list-property-keys entity-key))
+                          [:th]]]
+                        [:tbody
+                         (map (fn [entity]
+                                [:tr
+                                 (map (fn [property-key]
+                                        [:td
+                                         [:div (format-property-param entity-key property-key (get entity property-key))]])
+                                      (list-property-keys entity-key))
+                                 [:td.command-cell
+                                  [:a.btn.btn-primary.btn-xs {:href (<< "javascript: $.crossplane.setOpenerSelectProperty('~{target-element-id}', '~(:key entity)', '~(format-property-param entity-key representative-property-key (get entity representative-property-key))'); window.close()")}
+                                   [:span.glyphicon.glyphicon-link]]]])
+                              entities)]]
+                       (pager-control page-count page)
+                       [:p
+                        [:a.btn.btn-default {:href (<< "javascript: $.crossplane.setOpenerSelectProperty('~{target-element-id}', '', ''); window.close()")} (string/capitalize (dog-mission/translate :select-nothing))]
+                        "&nbsp;"
+                        [:a.btn.btn-primary {:href "javascript: window.close()"} (string/capitalize (dog-mission/translate :cancel))]])))]]))
+
 ;; Controllers.
 
 (defmulti condition
@@ -452,6 +529,12 @@
   [entity-key property-key]
   (range-condition entity-key property-key))
 
+(defmethod condition :many-to-one
+  [entity-key property-key]
+  (let [param-key (param-key entity-key property-key)]
+    (if-let [param-value (get-in *request* [:entity-params (keyword (format "%s-key" (name param-key)))])]
+      ($= (keyword (format "%s-key" (name property-key))) param-value))))
+
 (defmethod condition :default
   [entity-key property-key]
   nil)
@@ -460,6 +543,31 @@
   [entity-key uri-parameters]
   (jdbc/with-db-transaction [transaction @database-spec]
     (apply index-view
+      entity-key
+      (if (and (= (get-in *request* [:params :command]) "search") (empty? (:entity-param-errors *request*)))
+        (let [pages      (->> (-> (->> (if-let [conditions (not-empty (keep (partial condition entity-key) (inputtable-property-keys entity-key)))]
+                                         (apply $and conditions))
+                                       (database-data @database-schema transaction entity-key)
+                                       (database      @database-schema))
+                                  (get-condition-matched-rows entity-key))
+                              ((apply partial sort-by (sort-keyfn-and-comp entity-key)))
+                              (partition-all 20)
+                              (not-empty))
+              page-count (count pages)
+              page       (let [request-page (Integer/parseInt (or (get-in *request* [:params :page]) "1"))]
+                           (cond->> request-page
+                             (> request-page page-count) ((constantly page-count))
+                             (< request-page 1)          ((constantly 1))))]
+          [(if (empty? pages)
+             []
+             (nth pages (dec page)))
+           page-count
+           page])))))
+
+(defn select-controller
+  [entity-key uri-parameters]
+  (jdbc/with-db-transaction [transaction @database-spec]
+    (apply select-view
       entity-key
       (if (and (= (get-in *request* [:params :command]) "search") (empty? (:entity-param-errors *request*)))
         (let [pages      (->> (-> (->> (if-let [conditions (not-empty (keep (partial condition entity-key) (inputtable-property-keys entity-key)))]
@@ -536,6 +644,7 @@
                      (if-let [uri-parameters (route-matches method (format path-format (name %)))]
                        (compojure.response/render (controller % uri-parameters) request)))
                    [[:get    "/%s"           index-controller]  ; TODO: 画面生成を抑制するオプションを追加する。
+                    [:get    "/%s/select"    select-controller]
                     [:get    "/%s/new"       new-controller]
                     [:post   "/%s"           create-controller]
                     [:get    "/%s/:key/edit" edit-controller]

@@ -86,6 +86,16 @@
     showConfirmModal: function($element) {
       $.crossplane.getConfirmModal($element).modal('show');
       return this;
+    },
+
+    setOpenerSelectProperty: function(id, key, name) {
+      if (!window.opener || window.opener.closed) {
+        return this;
+      }
+      
+      $(window.opener.document.getElementById(id)).val(key);
+      $(window.opener.document.getElementById(id + '-name--')).val(name);
+      return this;
     }
   };
 
@@ -103,6 +113,10 @@
       return false;  // ダイアログの[Yes]ボタンが押されるまで待つために、とりあえず、イベントをキャンセルします。
     });
 
+    $('span[data-open-window-uri].input-group-addon').css('cursor', 'pointer').on('click', function() {
+      window.open($(this).data('open-window-uri'), '_blank');
+    });
+    
     $('div.date').each(function() {
       $(this).datetimepicker({
         locale: $.crossplane.locale,
