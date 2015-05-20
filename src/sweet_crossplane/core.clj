@@ -597,7 +597,7 @@
                           (partition-all 20)
                           (not-empty))
           page-count (count pages)
-          page       (let [request-page (Integer/parseInt (or (get-in *request* [:params :page]) "1"))]
+          page       (let [request-page (Integer/parseInt (get-in *request* [:params :page]))]
                        (max (min request-page page-count) 1))]
       [(if (empty? pages)
          []
