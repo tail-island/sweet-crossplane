@@ -437,19 +437,22 @@
 
 (defn- pagination-control
   [page-count page]
-  (letfn [(pagination-item-control [caption enable active link-to-page]
+  (letfn [(pagination-item-start-and-count []
+            (let [item-count (cond-> 5
+                               (< page-count 5) ((constantly page-count)))
+                  item-start (- page (quot item-count 2))]
+              [item-count
+               (cond-> item-start
+                 (< item-start 1)                               ((constantly 1))
+                 (> item-start (- page-count (dec item-count))) ((constantly (- page-count (dec item-count)))))]))
+          (pagination-item-control [caption enable active link-to-page]
             [:li {:class (cond-> ""
                            (not enable) (str " disabled")
                            active       (str " active"))}
              (link-to-with-params (:uri *request*) (assoc (:query-params *request*) "page" link-to-page) caption)])]
     [:ul.pagination
      (pagination-item-control "&laquo;" (> page 1) false 1)
-     (let [pagination-item-count (cond-> 5
-                                   (< page-count 5) ((constantly page-count))
-                                   (< page-count 1) ((constantly 1)))
-           pagination-item-start (cond-> (- page 2)
-                                   (< page 2)                ((constantly 1))
-                                   (> page (- page-count 2)) ((constantly (- page-count 4))))]
+     (let [[pagination-item-count pagination-item-start] (pagination-item-start-and-count)]
        (map #(pagination-item-control (str %) true (= % page) %) (take pagination-item-count (iterate inc pagination-item-start))))
      (pagination-item-control "&raquo;" (< page page-count) false page-count)]))
 
