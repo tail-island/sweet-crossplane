@@ -438,13 +438,8 @@
 (defn- pagination-control
   [page-count page]
   (letfn [(pagination-item-start-and-count []
-            (let [item-count (cond-> 5
-                               (< page-count 5) ((constantly page-count)))
-                  item-start (- page (quot item-count 2))]
-              [item-count
-               (cond-> item-start
-                 (< item-start 1)                               ((constantly 1))
-                 (> item-start (- page-count (dec item-count))) ((constantly (- page-count (dec item-count)))))]))
+            (let [item-count (min page-count 5)]
+              [item-count (min (max (- page (quot item-count 2)) 1) (- page-count (dec item-count)))]))
           (pagination-item-control [caption enable active link-to-page]
             [:li {:class (cond-> ""
                            (not enable) (str " disabled")
@@ -603,9 +598,7 @@
                           (not-empty))
           page-count (count pages)
           page       (let [request-page (Integer/parseInt (or (get-in *request* [:params :page]) "1"))]
-                       (cond->> request-page
-                         (> request-page page-count) ((constantly page-count))
-                         (< request-page 1)          ((constantly 1))))]
+                       (max (min request-page page-count) 1))]
       [(if (empty? pages)
          []
          (nth pages (dec page)))

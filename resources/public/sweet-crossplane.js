@@ -100,7 +100,7 @@
   };
 
   $(function() {
-    $('li.disabled a').on('click', function() {
+    $('li.disabled a, li.active a').on('click', function() {
       return false;
     });
 
