@@ -435,15 +435,23 @@
   [entity-key property-key]
   nil)
 
-(defn- pager-control
+(defn- pagination-control
   [page-count page]
-  (letfn [(pager-item-control [class caption enable page]
-            [:li {:class (cond-> class
-                           (not enable) (str " disabled"))}
-             (link-to-with-params (:uri *request*) (assoc (:query-params *request*) "page" page) caption)])]
-    [:ul.pager
-     (pager-item-control "previous" (string/capitalize (dog-mission/translate :previous)) (> page 1)          (dec page))
-     (pager-item-control "next"     (string/capitalize (dog-mission/translate :next))     (< page page-count) (inc page))]))
+  (letfn [(pagination-item-control [caption enable active link-to-page]
+            [:li {:class (cond-> ""
+                           (not enable) (str " disabled")
+                           active       (str " active"))}
+             (link-to-with-params (:uri *request*) (assoc (:query-params *request*) "page" link-to-page) caption)])]
+    [:ul.pagination
+     (pagination-item-control "&laquo;" (> page 1) false 1)
+     (let [pagination-item-count (cond-> 5
+                                   (< page-count 5) ((constantly page-count))
+                                   (< page-count 1) ((constantly 1)))
+           pagination-item-start (cond-> (- page 2)
+                                   (< page 2)                ((constantly 1))
+                                   (> page (- page-count 2)) ((constantly (- page-count 4))))]
+       (map #(pagination-item-control (str %) true (= % page) %) (take pagination-item-count (iterate inc pagination-item-start))))
+     (pagination-item-control "&raquo;" (< page page-count) false page-count)]))
 
 (defn- search-condition-panel
   [entity-key & [params]]
@@ -481,7 +489,7 @@
                     [:td.command-cell
                      (entity-command-fn entity)]])
                  entities)]]
-          (pager-control page-count page)
+          [:div.text-center (pagination-control page-count page)]
           [:p (command-fn)])))
 
 (defn index-view
