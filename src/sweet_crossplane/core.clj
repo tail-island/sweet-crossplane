@@ -25,21 +25,14 @@
 (dog-mission/conj-resource-bundle-namespace "sweet-crossplane.message")
 
 ;; Utilities.
-;; Ring Middlewares. You should add below middlewares in your application.
 
-(defn wrap-locale
-  [handler {:keys [locales]}]
+;; ring middlewares. You should add below middlewares in your application.
+
+(defn wrap-http-header-cache-control
+  [handler]
   (fn [request]
-    (letfn [(locale-and-quality [[locale-string quality-string]]
-              [(let [[language country] (next (re-find #"([a-z]+)(?:-([A-Z]+)|)" locale-string))]
-                 (Locale. language (or country "")))
-               (Double/parseDouble (second (re-find #"[qQ]=([\d.]+)" (or quality-string "q=1.0"))))])]
-      (let [client-locales (->> (string/split (get-in request [:headers "accept-language"]) #",")
-                                (map #(locale-and-quality (string/split % #";")))
-                                (sort-by second >)
-                                (map first))]
-        (binding [dog-mission/*locale* (or (some locales client-locales) dog-mission/*locale*)]
-          (handler request))))))
+    (if-let [response (handler request)]
+      (assoc-in response [:headers "Cache-Control"] "max-age=0, private, must-revalidate"))))
 
 (defn wrap-time-zone
   [handler]
@@ -54,6 +47,20 @@
                                                           document.cookie = \"time-zone-id=\" + encodeURIComponent(timeZoneId);
                                                           location.href = document.getElementById(\"go-back-uri\").value;")])
                                  request))))
+
+(defn wrap-locale
+  [handler {:keys [locales]}]
+  (fn [request]
+    (letfn [(locale-and-quality [[locale-string quality-string]]
+              [(let [[language country] (next (re-find #"([a-z]+)(?:-([A-Z]+)|)" locale-string))]
+                 (Locale. language (or country "")))
+               (Double/parseDouble (second (re-find #"[qQ]=([\d.]+)" (or quality-string "q=1.0"))))])]
+      (let [client-locales (->> (string/split (get-in request [:headers "accept-language"]) #",")
+                                (map #(locale-and-quality (string/split % #";")))
+                                (sort-by second >)
+                                (map first))]
+        (binding [dog-mission/*locale* (or (some locales client-locales) dog-mission/*locale*)]
+          (handler request))))))
 
 (defn param-key
   [entity-key property-key]
@@ -87,6 +94,8 @@
   (fn [request]
     (binding [*request* request]
       (handler request))))
+
+;; utility functions and macros.
 
 (defn base64-encode
   [plain]
@@ -136,17 +145,18 @@
   [entity-key]
   (get @database-schema entity-key))
 
+(defn property-keys
+  ([entity-key & property-types]
+   (->> (entity-schema entity-key)
+        ((apply juxt property-types))
+        (map keys)
+        (apply concat)))
+  ([entity-key]
+   (property-keys entity-key :columns :many-to-one-relationships :one-to-many-relationships)))
+
 (defn inputtable-property-keys
   [entity-key]
-  (->> (entity-schema entity-key)
-       ((juxt :columns :many-to-one-relationships))
-       (map keys)
-       (apply concat)))
-
-(defn property-keys
-  [entity-key]
-  (concat (inputtable-property-keys entity-key)
-          (keys (:one-to-many-relationships (entity-schema entity-key)))))
+  (property-keys entity-key :columns :many-to-one-relationships))
 
 (defn search-condition-property-keys
   [entity-key]
@@ -590,7 +600,7 @@
   [entity-key property-key]
   nil)
 
-(defn get-condition-matched-entities
+(defn condition-matched-entities-and-page
   [entity-key]
   (if (and (= (get-in *request* [:params :command]) "search") (empty? (:entity-param-errors *request*)))
     (let [pages      (->> (-> (->> (if-let [conditions (not-empty (keep (partial condition entity-key) (search-condition-property-keys entity-key)))]
@@ -613,12 +623,12 @@
 (defn index-controller
   [entity-key uri-parameters]
   (with-db-transaction'
-    (apply index-view entity-key (get-condition-matched-entities entity-key))))
+    (apply index-view entity-key (condition-matched-entities-and-page entity-key))))
 
 (defn select-controller
   [entity-key uri-parameters]
   (with-db-transaction'
-    (apply select-view entity-key (get-condition-matched-entities entity-key))))
+    (apply select-view entity-key (condition-matched-entities-and-page entity-key))))
 
 (defn new-controller
   [entity-key uri-parameters]
