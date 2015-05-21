@@ -63,28 +63,28 @@
           (handler request))))))
 
 (defn param-key
-  [entity-key property-key]
-  (radial-mount/property-message-key entity-key property-key))
+  [& args]
+  (apply radial-mount/property-message-key args))
 
-(declare entity-keys inputtable-property-keys parse-property-param)
+(declare entity-class-keys inputtable-property-keys parse-property-param)
 
 (defn wrap-entity-params
   [handler]
-  (letfn [(assoc-entity-param [request param-key entity-key property-key]
+  (letfn [(assoc-entity-param [request param-key entity-class-key property-key]
             (if-let [param-value (not-empty (get-in request [:params param-key]))]
               (try
-                (assoc-in request [:entity-params param-key] (parse-property-param entity-key property-key param-value))
+                (assoc-in request [:entity-params param-key] (parse-property-param entity-class-key property-key param-value))
                 (catch ParseException _
                   (update-in request [:entity-param-errors param-key] #(vec (conj % :has-the-wrong-format)))))))]
     (fn [request]
-      (handler (reduce (fn [request entity-key]
+      (handler (reduce (fn [request entity-class-key]
                          (reduce (fn [request [property-key param-key]]
                                    (cond-> request
-                                     (.startsWith (name param-key) (name (sweet-crossplane.core/param-key entity-key property-key))) (#(or (assoc-entity-param % param-key entity-key property-key) %))))
+                                     (.startsWith (name param-key) (name (sweet-crossplane.core/param-key entity-class-key property-key))) (#(or (assoc-entity-param % param-key entity-class-key property-key) %))))
                                  request
-                                 (combinatorics/cartesian-product (inputtable-property-keys entity-key) (keys (:params request)))))
+                                 (combinatorics/cartesian-product (inputtable-property-keys entity-class-key) (keys (:params request)))))
                        request
-                       (entity-keys))))))
+                       (entity-class-keys))))))
 
 (def ^:dynamic *request*
   nil)
@@ -137,68 +137,69 @@
 
 ;; Models.
 
-(defn entity-keys
+(defn entity-class-keys
   []
   (keys @database-schema))
 
-(defn entity-schema
-  [entity-key]
-  (get @database-schema entity-key))
+(defn entity-class-schema
+  [entity-class-key]
+  (get @database-schema entity-class-key))
 
 (defn property-keys
-  ([entity-key & property-types]
-   (->> (entity-schema entity-key)
+  ([entity-class-key & property-types]
+   (->> (entity-class-schema entity-class-key)
         ((apply juxt property-types))
         (map keys)
         (apply concat)))
-  ([entity-key]
-   (property-keys entity-key :columns :many-to-one-relationships :one-to-many-relationships)))
+  ([entity-class-key]
+   (property-keys entity-class-key :columns :many-to-one-relationships :one-to-many-relationships)))
 
 (defn inputtable-property-keys
-  [entity-key]
-  (property-keys entity-key :columns :many-to-one-relationships))
+  [entity-class-key]
+  (property-keys entity-class-key :columns :many-to-one-relationships))
 
 (defn search-condition-property-keys
-  [entity-key]
-  (or (get-in (entity-schema entity-key) [:search-condition :properties])
-      (inputtable-property-keys entity-key)))
+  [entity-class-key]
+  (or (get-in (entity-class-schema entity-class-key) [:search-condition :properties])
+      (inputtable-property-keys entity-class-key)))
 
 (defn list-property-keys
-  [entity-key]
-  (or (get-in (entity-schema entity-key) [:list :properties])
-      (property-keys entity-key)))
+  [entity-class-key]
+  (or (get-in (entity-class-schema entity-class-key) [:list :properties])
+      (property-keys entity-class-key)))
 
 (defn sort-keyfn-and-comp
-  [entity-key]
-  (let [[keyfn comp] (get-in (entity-schema entity-key) [:list :sort-by])]
-    [(or keyfn (first (list-property-keys entity-key)))
+  [entity-class-key]
+  (let [[keyfn comp] (get-in (entity-class-schema entity-class-key) [:list :sort-by])]
+    [(or keyfn (first (list-property-keys entity-class-key)))
      (or comp  compare)]))
 
 (defn representative-property-key
-  [entity-key]
-  (or (:representative (entity-schema entity-key))
-      :name))
+  [entity-class-key]
+  (or (:representative (entity-class-schema entity-class-key))
+      (some #{:name} (property-keys entity-class-key))
+      (first (property-keys entity-class-key))))
 
 (defn property-schema
-  [entity-key property-key]
-  (let [entity-schema (entity-schema entity-key)]
-    (or (get-in entity-schema [:columns                   property-key])
-        (get-in entity-schema [:many-to-one-relationships property-key])
-        (get-in entity-schema [:one-to-many-relationships property-key]))))
+  [entity-class-key property-key]
+  (let [entity-class-schema (entity-class-schema entity-class-key)]
+    (or (get-in entity-class-schema [:columns                   property-key])
+        (get-in entity-class-schema [:many-to-one-relationships property-key])
+        (get-in entity-class-schema [:one-to-many-relationships property-key]))))
 
 (defn placeholder
-  [entity-key property-key]
-  (get-in (entity-schema entity-key) [:placeholders property-key]))
+  [entity-class-key property-key]
+  (get-in (entity-class-schema entity-class-key) [:placeholders property-key]))
 
 (defn property-type
-  [entity-key property-key]
-  (let [entity-schema (entity-schema entity-key)]
-    (or (get-in entity-schema [:columns property-key :type])
-        (and (get-in entity-schema [:many-to-one-relationships property-key]) :many-to-one)
-        (and (get-in entity-schema [:one-to-many-relationships property-key]) :one-to-many))))
+  [entity-class-key property-key]
+  (let [entity-class-schema (entity-class-schema entity-class-key)]
+    (or (get-in entity-class-schema [:columns property-key :type])
+        (and (get-in entity-class-schema [:many-to-one-relationships property-key]) :many-to-one)
+        (and (get-in entity-class-schema [:one-to-many-relationships property-key]) :one-to-many))))
 
 (defmulti parse-property-param
-  (fn [entity-key property-key param-value] (property-type entity-key property-key)))
+  (fn [entity-class-key property-key param-value] (property-type entity-class-key property-key)))
 
 (defmethod parse-property-param :integer
   [_ _ param-value]
@@ -232,7 +233,7 @@
   param-value)
 
 (defmulti format-property-param
-  (fn [entity-key property-key param-value] (property-type entity-key property-key)))
+  (fn [entity-class-key property-key param-value] (property-type entity-class-key property-key)))
 
 (defmethod format-property-param :date
   [_ _ param-value]
@@ -247,21 +248,21 @@
     ""))
 
 (defn- format-relationship-property-param
-  [entity-key property-key param-value]
+  [entity-class-key property-key param-value]
   (if param-value
     (if (map? param-value)
-      (let [entity-key   (:table-key (property-schema entity-key property-key))
-            property-key (representative-property-key entity-key)]
-        (format-property-param entity-key property-key (get param-value property-key)))
+      (let [entity-class-key (:table-key (property-schema entity-class-key property-key))
+            property-key     (representative-property-key entity-class-key)]
+        (format-property-param entity-class-key property-key (get param-value property-key)))
       (dog-mission/l10n-format param-value))))
 
 (defmethod format-property-param :many-to-one
-  [entity-key property-key param-value]
-  (format-relationship-property-param entity-key property-key param-value))
+  [entity-class-key property-key param-value]
+  (format-relationship-property-param entity-class-key property-key param-value))
 
 (defmethod format-property-param :one-to-many
-  [entity-key property-key param-value]
-  (string/join (dog-mission/translate :comma) (map (partial format-relationship-property-param entity-key property-key) param-value)))
+  [entity-class-key property-key param-value]
+  (string/join (dog-mission/translate :comma) (map (partial format-relationship-property-param entity-class-key property-key) param-value)))
 
 (defmethod format-property-param :default
   [_ _ param-value]
@@ -319,9 +320,9 @@
           [:span.caret]]
          [:ul.dropdown-menu
           {:role "menu"}
-          (map (fn [entity-key]
-                 [:li (link-to (<< "/~(name entity-key)") (string/capitalize (dog-mission/translate entity-key)))])
-               (entity-keys))]]]]]]
+          (map (fn [entity-class-key]
+                 [:li (link-to (<< "/~(name entity-class-key)") (string/capitalize (dog-mission/translate entity-class-key)))])
+               (entity-class-keys))]]]]]]
     [:article
      [:div.container-fluid
       contents]]
@@ -349,26 +350,26 @@
 ;; controls for input condition.
 
 (defmulti condition-control
-  (fn [entity-key property-key] (property-type entity-key property-key)))
+  (fn [entity-class-key property-key] (property-type entity-class-key property-key)))
 
 (defn- string-condition-control
-  [entity-key property-key]
-  (let [param-key (param-key entity-key property-key)]
+  [entity-class-key property-key]
+  (let [param-key (param-key entity-class-key property-key)]
     [:div.form-group
      (label param-key (string/capitalize (dog-mission/translate param-key)))
-     (text-field {:class "form-control", :placeholder (placeholder entity-key property-key)} param-key (format-property-param entity-key property-key (get-in *request* [:entity-params param-key])))]))
+     (text-field {:class "form-control", :placeholder (placeholder entity-class-key property-key)} param-key (format-property-param entity-class-key property-key (get-in *request* [:entity-params param-key])))]))
 
 (defmethod condition-control :string
-  [entity-key property-key]
-  (string-condition-control entity-key property-key))
+  [& args]
+  (apply string-condition-control args))
 
 (defmethod condition-control :text
-  [entity-key property-key]
-  (string-condition-control entity-key property-key))
+  [& args]
+  (apply string-condition-control args))
 
 (defn- number-condition-control
-  [entity-key property-key]
-  (let [param-key   (param-key entity-key property-key)
+  [entity-class-key property-key]
+  (let [param-key   (param-key entity-class-key property-key)
         param-key-1 (keyword (format "%s-1--" (name param-key)))
         param-key-2 (keyword (format "%s-2--" (name param-key)))
         errors-1    (not-empty (get-in *request* [:entity-param-errors param-key-1]))
@@ -382,30 +383,30 @@
                 param-key
                 (if errors
                   (get-in *request* [:params param-key])
-                  (format-property-param entity-key property-key (get-in *request* [:entity-params param-key]))))])]
+                  (format-property-param entity-class-key property-key (get-in *request* [:entity-params param-key]))))])]
       (list
        (label param-key (string/capitalize (dog-mission/translate param-key)))
        (text-field param-key-1 errors-1)
        (text-field param-key-2 errors-2)))))
 
 (defmethod condition-control :integer
-  [entity-key property-key]
-  (number-condition-control entity-key property-key))
+  [& args]
+  (apply number-condition-control args))
 
 (defmethod condition-control :decimal
-  [entity-key property-key]
-  (number-condition-control entity-key property-key))
+  [& args]
+  (apply number-condition-control args))
 
 (defmethod condition-control :boolean
-  [entity-key property-key]
-  (let [param-key (param-key entity-key property-key)]
+  [entity-class-key property-key]
+  (let [param-key (param-key entity-class-key property-key)]
     [:div.form-group
      (label param-key (string/capitalize (dog-mission/translate param-key)))
-     (drop-down {:class "form-control"} param-key (map (partial format-property-param entity-key property-key) [nil true false]) (format-property-param entity-key property-key (get-in *request* [:entity-params param-key])))]))
+     (drop-down {:class "form-control"} param-key (map (partial format-property-param entity-class-key property-key) [nil true false]) (format-property-param entity-class-key property-key (get-in *request* [:entity-params param-key])))]))
 
 (defn- date-timestamp-condition-control
-  [entity-key property-key]
-  (let [param-key   (param-key entity-key property-key)
+  [entity-class-key property-key]
+  (let [param-key   (param-key entity-class-key property-key)
         param-key-1 (keyword (format "%s-1--" (name param-key)))
         param-key-2 (keyword (format "%s-2--" (name param-key)))
         errors-1    (not-empty (get-in *request* [:entity-param-errors param-key-1]))
@@ -414,13 +415,13 @@
               [:div.form-group
                (if errors
                  {:class "has-error has-feedback"})
-               [:div.input-group.date {:data-type (:type (property-schema entity-key property-key))}
+               [:div.input-group.date {:data-type (:type (property-schema entity-class-key property-key))}
                 (hiccup.form/text-field
                  {:class "form-control"}
                  param-key
                  (if errors
                    (get-in *request* [:params param-key])
-                   (format-property-param entity-key property-key (get-in *request* [:entity-params param-key]))))
+                   (format-property-param entity-class-key property-key (get-in *request* [:entity-params param-key]))))
                 [:span.input-group-addon
                  [:span.glyphicon.glyphicon-calendar]]]])]
       (list
@@ -429,28 +430,28 @@
        (text-field param-key-2 errors-2)))))
 
 (defmethod condition-control :date
-  [entity-key property-key]
-  (date-timestamp-condition-control entity-key property-key))
+  [& args]
+  (apply date-timestamp-condition-control args))
 
 (defmethod condition-control :timestamp
-  [entity-key property-key]
-  (date-timestamp-condition-control entity-key property-key))
+  [& args]
+  (apply date-timestamp-condition-control args))
 
 (defmethod condition-control :many-to-one
-  [entity-key property-key]
-  (let [param-key          (param-key entity-key property-key)
+  [entity-class-key property-key]
+  (let [param-key          (param-key entity-class-key property-key)
         param-key-key      (keyword (format "%s-key"    (name param-key)))
         param-key-name-key (keyword (format "%s-name--" (name param-key-key)))]
     [:div.form-group
      (label param-key-key (string/capitalize (dog-mission/translate param-key)))
      (hidden-field param-key-key (get-in *request* [:entity-params param-key-key]))
      [:div.input-group
-      (text-field {:class "form-control", :readonly "readonly"} param-key-name-key (format-property-param entity-key property-key (get-in *request* [:entity-params param-key-name-key])))
-      [:span.input-group-addon {:data-open-window-uri (to-uri (<< "/~(name (:table-key (property-schema entity-key property-key)))/select?target-element-id=~(URLEncoder/encode (name param-key-key))"))}
+      (text-field {:class "form-control", :readonly "readonly"} param-key-name-key (format-property-param entity-class-key property-key (get-in *request* [:entity-params param-key-name-key])))
+      [:span.input-group-addon {:data-open-window-uri (to-uri (<< "/~(name (:table-key (property-schema entity-class-key property-key)))/select?target-element-id=~(URLEncoder/encode (name param-key-key))"))}
        [:span.glyphicon.glyphicon-search]]]]))
 
 (defmethod condition-control :default
-  [entity-key property-key]
+  [entity-class-key property-key]
   nil)
 
 (defn pagination-control
@@ -470,7 +471,7 @@
      (pagination-item-control "&raquo;" (< page page-count) false page-count)]))
 
 (defn search-condition-panel
-  [entity-key & [params]]
+  [entity-class-key & [params]]
   [:div.panel.panel-default
    [:div.panel-heading
     [:div.panel-title (string/capitalize (dog-mission/translate :search-condition))]]
@@ -481,36 +482,36 @@
      (map (fn [[param-name param-value]]
             (hidden-field param-name param-value))
           params)
-     (map (partial condition-control entity-key) (search-condition-property-keys entity-key))
+     (map (partial condition-control entity-class-key) (search-condition-property-keys entity-class-key))
      [:button.btn.btn-primary {:type "submit", :name :command, :value "search"}
       (string/capitalize (dog-mission/translate :search))])]])
 
 ;; controls for input value.
 
 (defmulti input-control
-  (fn [entity-key entity property-key] (property-type entity-key property-key)))
+  (fn [entity-class-key entity property-key] (property-type entity-class-key property-key)))
 
 (defn- string-input-control
-  [entity-key entity property-key]
-  (let [param-key (param-key entity-key property-key)
+  [entity-class-key entity property-key]
+  (let [param-key (param-key entity-class-key property-key)
         errors    (not-empty (get-in *request* [:entity-param-errors param-key]))]
     [:div.form-group
      (if errors
        {:class "has-error has-feedback"})
      (label param-key (string/capitalize (dog-mission/translate param-key)))
-     (text-field {:class "form-control", :placeholder (placeholder entity-key property-key)} param-key (format-property-param entity-key property-key (get entity property-key)))]))
+     (text-field {:class "form-control", :placeholder (placeholder entity-class-key property-key)} param-key (format-property-param entity-class-key property-key (get entity property-key)))]))
 
 (defmethod input-control :string
-  [entity-key entity property-key]
-  (string-input-control entity-key entity property-key))
+  [& args]
+  (apply string-input-control args))
 
 (defmethod input-control :text
-  [entity-key entity property-key]
-  (string-input-control entity-key entity property-key))
+  [& args]
+  (apply string-input-control args))
 
 (defn- number-input-control
-  [entity-key entity property-key]
-  (let [param-key (param-key entity-key property-key)
+  [entity-class-key entity property-key]
+  (let [param-key (param-key entity-class-key property-key)
         errors    (not-empty (get-in *request* [:entity-param-errors param-key]))]
     [:div.form-group
      (if errors
@@ -521,55 +522,55 @@
       param-key
       (if errors
         (get-in *request* [:params param-key])
-        (format-property-param entity-key property-key (get entity property-key))))]))
+        (format-property-param entity-class-key property-key (get entity property-key))))]))
 
 (defmethod input-control :integer
-  [entity-key entity property-key]
-  (number-input-control entity-key entity property-key))
+  [& args]
+  (apply number-input-control args))
 
 (defmethod input-control :decimal
-  [entity-key entity property-key]
-  (number-input-control entity-key entity property-key))
+  [& args]
+  (apply number-input-control args))
 
 (defmethod input-control :boolean
-  [entity-key entity property-key]
-  (let [param-key (param-key entity-key property-key)
+  [entity-class-key entity property-key]
+  (let [param-key (param-key entity-class-key property-key)
         errors    (not-empty (get-in *request* [:entity-param-errors param-key]))]
     [:div.form-group
      (if errors
        {:class "has-error has-feedback"})
      (label param-key (string/capitalize (dog-mission/translate param-key)))
-     (drop-down {:class "form-control"} param-key (map (partial format-property-param entity-key property-key) [nil true false]) (format-property-param entity-key property-key (get entity property-key)))]))
+     (drop-down {:class "form-control"} param-key (map (partial format-property-param entity-class-key property-key) [nil true false]) (format-property-param entity-class-key property-key (get entity property-key)))]))
 
 (defn- date-timestamp-input-control
-  [entity-key entity property-key]
-  (let [param-key (param-key entity-key property-key)
+  [entity-class-key entity property-key]
+  (let [param-key (param-key entity-class-key property-key)
         errors    (not-empty (get-in *request* [:entity-param-errors param-key]))]
     [:div.form-group
      (if errors
        {:class "has-error has-feedback"})
      (label param-key (string/capitalize (dog-mission/translate param-key)))
-     [:div.input-group.date {:data-type (:type (property-schema entity-key property-key))}
+     [:div.input-group.date {:data-type (:type (property-schema entity-class-key property-key))}
       (hiccup.form/text-field
        {:class "form-control"}
        param-key
        (if errors
          (get-in *request* [:params param-key])
-         (format-property-param entity-key property-key (get entity property-key))))
+         (format-property-param entity-class-key property-key (get entity property-key))))
       [:span.input-group-addon
        [:span.glyphicon.glyphicon-calendar]]]]))
 
 (defmethod input-control :date
-  [entity-key entity property-key]
-  (date-timestamp-input-control entity-key entity property-key))
+  [entity-class-key entity property-key]
+  (date-timestamp-input-control entity-class-key entity property-key))
 
 (defmethod input-control :timestamp
-  [entity-key entity property-key]
-  (date-timestamp-input-control entity-key entity property-key))
+  [entity-class-key entity property-key]
+  (date-timestamp-input-control entity-class-key entity property-key))
 
 (defmethod input-control :many-to-one
-  [entity-key entity property-key]
-  (let [param-key          (param-key entity-key property-key)
+  [entity-class-key entity property-key]
+  (let [param-key          (param-key entity-class-key property-key)
         param-key-key      (keyword (format "%s-key"    (name param-key)))
         param-key-name-key (keyword (format "%s-name--" (name param-key-key)))
         errors             (get-in *request* [:entity-pararam-errors param-key])]
@@ -579,51 +580,51 @@
      (label param-key-key (string/capitalize (dog-mission/translate param-key)))
      (hidden-field param-key-key (get entity (many-to-one-relationship-key-to-physical-column-key property-key)))
      [:div.input-group
-      (text-field {:class "form-control", :readonly "readonly"} param-key-name-key (format-property-param entity-key property-key (get entity property-key)))
-      [:span.input-group-addon {:data-open-window-uri (to-uri (<< "/~(name (:table-key (property-schema entity-key property-key)))/select?target-element-id=~(URLEncoder/encode (name param-key-key))"))}
+      (text-field {:class "form-control", :readonly "readonly"} param-key-name-key (format-property-param entity-class-key property-key (get entity property-key)))
+      [:span.input-group-addon {:data-open-window-uri (to-uri (<< "/~(name (:table-key (property-schema entity-class-key property-key)))/select?target-element-id=~(URLEncoder/encode (name param-key-key))"))}
        [:span.glyphicon.glyphicon-search]]]]))
 
 (defmethod input-control :one-to-many
-  [entity-key entity property-key]
-  (let [param-key (param-key entity-key property-key)]
+  [entity-class-key entity property-key]
+  (let [param-key (param-key entity-class-key property-key)]
     [:div.form-group
      (label param-key (string/capitalize (dog-mission/translate param-key)))
-     (text-field {:class "form-control", :disabled "disabled"} param-key (format-property-param entity-key property-key (get entity property-key)))]))
+     (text-field {:class "form-control", :disabled "disabled"} param-key (format-property-param entity-class-key property-key (get entity property-key)))]))
 
 (defmethod input-control :default
-  [entity-key entity property-key]
+  [entity-class-key entity property-key]
   nil)
 
 (defn input-form-panel
-  [entity-key entity method uri submit-button-caption]
+  [entity-class-key entity method uri submit-button-caption]
   (form-to
    [method uri]
    (hidden-field :index-params (get-in *request* [:params :index-params]))
-   (map (partial input-control entity-key entity) (property-keys entity-key))
+   (map (partial input-control entity-class-key entity) (property-keys entity-class-key))
    [:p
     (submit-button {:class "btn btn-primary"} (string/capitalize (dog-mission/translate submit-button-caption)))
     "&nbsp;"
-    (link-to-with-method-and-params {:class "btn btn-default"} (<< "/~(name entity-key)") :get (base64-decode (get-in *request* [:params :index-params])) (string/capitalize (dog-mission/translate :back)))]))
+    (link-to-with-method-and-params {:class "btn btn-default"} (<< "/~(name entity-class-key)") :get (base64-decode (get-in *request* [:params :index-params])) (string/capitalize (dog-mission/translate :back)))]))
 
 ;; views.
 
 (defn list-entities-panel
-  [entity-key entities page-count page entity-command-fn command-fn]
+  [entity-class-key entities page-count page entity-command-fn command-fn]
   (if entities
     (list [:table.table.table-condensed.table-hover
            [:thead
             [:tr
              (map (fn [property-key]
-                    [:th (string/capitalize (dog-mission/translate (param-key entity-key property-key)))])
-                  (list-property-keys entity-key))
+                    [:th (string/capitalize (dog-mission/translate (param-key entity-class-key property-key)))])
+                  (list-property-keys entity-class-key))
              [:th]]]
            [:tbody
             (map (fn [entity]
                    [:tr
                     (map (fn [property-key]
                            [:td
-                            [:div (format-property-param entity-key property-key (get entity property-key))]])
-                         (list-property-keys entity-key))
+                            [:div (format-property-param entity-class-key property-key (get entity property-key))]])
+                         (list-property-keys entity-class-key))
                     [:td.command-cell
                      (entity-command-fn entity)]])
                  entities)]]
@@ -631,33 +632,33 @@
           [:p (command-fn)])))
 
 (defn index-view
-  [entity-key & [entities page-count page]]
-  (layout (string/capitalize (dog-mission/translate :list-view-title (dog-mission/translate entity-key)))
+  [entity-class-key & [entities page-count page]]
+  (layout (string/capitalize (dog-mission/translate :list-view-title (dog-mission/translate entity-class-key)))
           [:div.row
-           [:div.col-md-3 (search-condition-panel entity-key)]
-           [:div.col-md-9 (list-entities-panel    entity-key entities page-count page
+           [:div.col-md-3 (search-condition-panel entity-class-key)]
+           [:div.col-md-9 (list-entities-panel    entity-class-key entities page-count page
                                                   (fn [entity]
                                                     (list (link-to-with-method-and-params
-                                                           {:class "btn btn-primary btn-xs"} (<< "/~(name entity-key)/~(:key entity)/edit") :get {:index-params (base64-encode (:query-params *request*))}
+                                                           {:class "btn btn-primary btn-xs"} (<< "/~(name entity-class-key)/~(:key entity)/edit") :get {:index-params (base64-encode (:query-params *request*))}
                                                            [:span.glyphicon.glyphicon-pencil])
                                                           "&nbsp;"
                                                           (link-to-with-method-and-params
-                                                           {:class "btn btn-danger btn-xs", :data-confirm (string/capitalize (dog-mission/translate :are-you-sure?))} (<< "/~(name entity-key)/~(:key entity)") :delete {:index-params (base64-encode (:query-params *request*))}
+                                                           {:class "btn btn-danger btn-xs", :data-confirm (string/capitalize (dog-mission/translate :are-you-sure?))} (<< "/~(name entity-class-key)/~(:key entity)") :delete {:index-params (base64-encode (:query-params *request*))}
                                                            [:span.glyphicon.glyphicon-trash])))
                                                   (fn []
-                                                    (link-to-with-method-and-params {:class "btn btn-primary"} (<< "/~(name entity-key)/new") :get {:index-params (base64-encode (:query-params *request*))} (string/capitalize (dog-mission/translate :new)))))]]))
+                                                    (link-to-with-method-and-params {:class "btn btn-primary"} (<< "/~(name entity-class-key)/new") :get {:index-params (base64-encode (:query-params *request*))} (string/capitalize (dog-mission/translate :new)))))]]))
 
 (defn select-view
-  [entity-key & [entities page-count page]]
+  [entity-class-key & [entities page-count page]]
   (let [target-element-id           (get-in *request* [:params :target-element-id])
-        representative-property-key (representative-property-key entity-key)]
-    (layout (string/capitalize (dog-mission/translate :select-view-title (dog-mission/translate entity-key)))
+        representative-property-key (representative-property-key entity-class-key)]
+    (layout (string/capitalize (dog-mission/translate :select-view-title (dog-mission/translate entity-class-key)))
             [:div.row
-             [:div.col-md-3 (search-condition-panel entity-key {:target-element-id (get-in *request* [:params :target-element-id])})]
-             [:div.col-md-9 (list-entities-panel    entity-key entities page-count page
+             [:div.col-md-3 (search-condition-panel entity-class-key {:target-element-id (get-in *request* [:params :target-element-id])})]
+             [:div.col-md-9 (list-entities-panel    entity-class-key entities page-count page
                                                     (fn [entity]
                                                       (link-to-javascript
-                                                       {:class "btn btn-primary btn-xs"} (<< "$.crossplane.setOpenerSelectProperty('~{target-element-id}', '~(:key entity)', '~(format-property-param entity-key representative-property-key (get entity representative-property-key))'); window.close()")
+                                                       {:class "btn btn-primary btn-xs"} (<< "$.crossplane.setOpenerSelectProperty('~{target-element-id}', '~(:key entity)', '~(format-property-param entity-class-key representative-property-key (get entity representative-property-key))'); window.close()")
                                                        [:span.glyphicon.glyphicon-link]))
                                                     (fn []
                                                       (let [target-element-id (get-in *request* [:params :target-element-id])]
@@ -666,36 +667,36 @@
                                                               (link-to-javascript {:class "btn btn-default"} "window.close()" (string/capitalize (dog-mission/translate :cancel)))))))]])))
 
 (defn new-view
-  [entity-key entity]
-  (layout (string/capitalize (dog-mission/translate :new-view-title (dog-mission/translate entity-key)))
-          (input-form-panel entity-key entity :post (<< "/~(name entity-key)") :create)))
+  [entity-class-key entity]
+  (layout (string/capitalize (dog-mission/translate :new-view-title (dog-mission/translate entity-class-key)))
+          (input-form-panel entity-class-key entity :post (<< "/~(name entity-class-key)") :create)))
 
 (defn edit-view
-  [entity-key entity]
-  (layout (string/capitalize (dog-mission/translate :edit-view-title (dog-mission/translate entity-key)))
-          (input-form-panel entity-key entity :patch (<< "/~(name entity-key)/~(:key entity)") :update)))
+  [entity-class-key entity]
+  (layout (string/capitalize (dog-mission/translate :edit-view-title (dog-mission/translate entity-class-key)))
+          (input-form-panel entity-class-key entity :patch (<< "/~(name entity-class-key)/~(:key entity)") :update)))
 
 ;; Controllers.
 
 (defmulti condition
-  (fn [entity-key property-key] (property-type entity-key property-key)))
+  (fn [entity-class-key property-key] (property-type entity-class-key property-key)))
 
 (defn- string-condition
-  [entity-key property-key]
-  (if-let [param-value (get-in *request* [:entity-params (param-key entity-key property-key)])]
+  [entity-class-key property-key]
+  (if-let [param-value (get-in *request* [:entity-params (param-key entity-class-key property-key)])]
     ($like property-key (format "%%%s%%" param-value))))
 
 (defmethod condition :string
-  [entity-key property-key]
-  (string-condition entity-key property-key))
+  [& args]
+  (apply string-condition args))
 
 (defmethod condition :text
-  [entity-key property-key]
-  (string-condition entity-key property-key))
+  [& args]
+  (apply string-condition args))
 
 (defn- range-condition
-  [entity-key property-key]
-  (let [param-key (param-key entity-key property-key)]
+  [entity-class-key property-key]
+  (let [param-key (param-key entity-class-key property-key)]
     (if-let [conditions (not-empty (keep identity [(if-let [param-value (get-in *request* [:entity-params (keyword (format "%s-1--" (name param-key)))])]
                                                      ($>= property-key param-value))
                                                    (if-let [param-value (get-in *request* [:entity-params (keyword (format "%s-2--" (name param-key)))])]
@@ -703,131 +704,131 @@
       (apply $and conditions))))
 
 (defmethod condition :integer
-  [entity-key property-key]
-  (range-condition entity-key property-key))
+  [& args]
+  (apply range-condition args))
 
 (defmethod condition :decimal
-  [entity-key property-key]
-  (range-condition entity-key property-key))
+  [& args]
+  (apply range-condition args))
 
 (defmethod condition :boolean
-  [entity-key property-key]
-  (let [param-value (get-in *request* [:entity-params (param-key entity-key property-key)])]
+  [entity-class-key property-key]
+  (let [param-value (get-in *request* [:entity-params (param-key entity-class-key property-key)])]
     (if-not (nil? param-value)
       (if param-value
         property-key
         ($not property-key)))))
 
 (defmethod condition :date
-  [entity-key property-key]
-  (range-condition entity-key property-key))
+  [& args]
+  (apply range-condition args))
 
 (defmethod condition :timestamp
-  [entity-key property-key]
-  (range-condition entity-key property-key))
+  [& args]
+  (apply range-condition args))
 
 (defmethod condition :many-to-one
-  [entity-key property-key]
-  (if-let [param-value (get-in *request* [:entity-params (keyword (format "%s-key" (name (param-key entity-key property-key))))])]
+  [entity-class-key property-key]
+  (if-let [param-value (get-in *request* [:entity-params (keyword (format "%s-key" (name (param-key entity-class-key property-key))))])]
     ($= (many-to-one-relationship-key-to-physical-column-key property-key) param-value)))
 
 (defmethod condition :default
-  [entity-key property-key]
+  [entity-class-key property-key]
   nil)
 
 (defn condition-matched-entities-and-page
-  [entity-key]
+  [entity-class-key]
   (if (and (= (get-in *request* [:params :command]) "search") (empty? (:entity-param-errors *request*)))
-    (let [pages      (->> (-> (->> (if-let [conditions (not-empty (keep (partial condition entity-key) (search-condition-property-keys entity-key)))]
-                                     (apply $and conditions))
-                                   (database-data @database-schema *transaction* entity-key)
-                                   (database      @database-schema))
-                              (get-condition-matched-rows entity-key))
-                          ((apply partial sort-by (sort-keyfn-and-comp entity-key)))
-                          (partition-all 20)
-                          (not-empty))
-          page-count (count pages)
-          page       (let [request-page (Integer/parseInt (get-in *request* [:params :page]))]
-                       (max (min request-page page-count) 1))]
-      [(if (empty? pages)
+    (let [entity-pages (->> (-> (->> (if-let [conditions (not-empty (keep (partial condition entity-class-key) (search-condition-property-keys entity-class-key)))]
+                                       (apply $and conditions))
+                                     (database-data @database-schema *transaction* entity-class-key)
+                                     (database      @database-schema))
+                                (get-condition-matched-rows entity-class-key))
+                            ((apply partial sort-by (sort-keyfn-and-comp entity-class-key)))
+                            (partition-all 20)
+                            (not-empty))
+          page-count   (count entity-pages)
+          page         (let [request-page (Integer/parseInt (get-in *request* [:params :page]))]
+                         (max (min request-page page-count) 1))]
+      [(if (empty? entity-pages)
          []
-         (nth pages (dec page)))
+         (nth entity-pages (dec page)))
        page-count
        page])))
 
-(defn target-entity-database
-  [entity-key uri-parameters]
-  (->> (database-data @database-schema *transaction* entity-key ($= :key (UUID/fromString (:key uri-parameters))))
+(defn target-contained-database
+  [entity-class-key uri-parameters]
+  (->> (database-data @database-schema *transaction* entity-class-key ($= :key (UUID/fromString (:key uri-parameters))))
        (database      @database-schema)))
 
 (defn index-controller
-  [entity-key uri-parameters]
+  [entity-class-key uri-parameters]
   (with-db-transaction'
-    (apply index-view entity-key (condition-matched-entities-and-page entity-key))))
+    (apply index-view entity-class-key (condition-matched-entities-and-page entity-class-key))))
 
 (defn select-controller
-  [entity-key uri-parameters]
+  [entity-class-key uri-parameters]
   (with-db-transaction'
-    (apply select-view entity-key (condition-matched-entities-and-page entity-key))))
+    (apply select-view entity-class-key (condition-matched-entities-and-page entity-class-key))))
 
 (defn new-controller
-  [entity-key uri-parameters]
-  (new-view entity-key {}))
+  [entity-class-key uri-parameters]
+  (new-view entity-class-key {}))
 
 (defn create-controller
-  [entity-key uri-parameters]
+  [entity-class-key uri-parameters]
   (with-db-transaction'
-    (let [entity-schema (entity-schema entity-key)
-          entity        (->> (reduce (fn [entity property-key]
-                                       (let [many-to-one? (= (property-type entity-key property-key) :many-to-one)
-                                             column-key   (cond-> property-key
-                                                            many-to-one? (many-to-one-relationship-key-to-physical-column-key))
-                                             param-key    (cond-> (param-key entity-key property-key)
-                                                            many-to-one? (#(keyword (format "%s-key" (name %)))))
-                                             errors       (not-empty (get-in *request* [:entity-param-errors param-key]))]
-                                         (cond-> entity
-                                           (not errors) (assoc column-key (get-in *request* [:entity-params param-key])))))
-                                     {}
-                                     (inputtable-property-keys entity-key)))]
+    (let [entity-class-schema (entity-class-schema entity-class-key)
+          entity              (->> (reduce (fn [entity property-key]
+                                             (let [many-to-one? (= (property-type entity-class-key property-key) :many-to-one)
+                                                   column-key   (cond-> property-key
+                                                                  many-to-one? (many-to-one-relationship-key-to-physical-column-key))
+                                                   param-key    (cond-> (param-key entity-class-key property-key)
+                                                                  many-to-one? (#(keyword (format "%s-key" (name %)))))
+                                                   errors       (not-empty (get-in *request* [:entity-param-errors param-key]))]
+                                               (cond-> entity
+                                                 (not errors) (assoc column-key (get-in *request* [:entity-params param-key])))))
+                                           {}
+                                           (inputtable-property-keys entity-class-key)))]
       (if (not-empty (get-in *request* [:entity-param-errors]))
-        (new-view entity-key entity)
+        (new-view entity-class-key entity)
         (let [database (-> (database @database-schema)
-                           (assoc-in [entity-key (new-key)] entity))]
+                           (assoc-in [entity-class-key (new-key)] entity))]
           (save! @database-schema database *transaction*)
-          (layout (string/capitalize (dog-mission/translate :update-view-title (dog-mission/translate entity-key)))
-                  (javascript-tag (<< "$.crossplane.goToWithMethodAndParams('~(to-uri (<< \"/~(name entity-key)\"))', 'get', ~(json/write-str (base64-decode (get-in *request* [:params :index-params]))));"))))))))
-      
+          (layout (string/capitalize (dog-mission/translate :update-view-title (dog-mission/translate entity-class-key)))
+                  (javascript-tag (<< "$.crossplane.goToWithMethodAndParams('~(to-uri (<< \"/~(name entity-class-key)\"))', 'get', ~(json/write-str (base64-decode (get-in *request* [:params :index-params]))));"))))))))
+
 (defn edit-controller
-  [entity-key uri-parameters]
+  [entity-class-key uri-parameters]
   (with-db-transaction'
-    (edit-view entity-key (get-in (target-entity-database entity-key uri-parameters) [entity-key (UUID/fromString (:key uri-parameters))]))))
+    (edit-view entity-class-key (get-in (target-contained-database entity-class-key uri-parameters) [entity-class-key (UUID/fromString (:key uri-parameters))]))))
 
 (defn update-controller
-  [entity-key uri-parameters]
+  [entity-class-key uri-parameters]
   (with-db-transaction'
-    (let [entity-schema (entity-schema entity-key)
-          database      (->> (reduce (fn [database property-key]
-                                       (let [many-to-one? (= (property-type entity-key property-key) :many-to-one)
-                                             column-key   (cond-> property-key
-                                                            many-to-one? (many-to-one-relationship-key-to-physical-column-key))
-                                             param-key    (cond->> (param-key entity-key property-key)
-                                                            many-to-one? (#(keyword (format "%s-key" (name %)))))
-                                             errors       (not-empty (get-in *request* [:entity-param-errors param-key]))]
-                                         (cond-> database
-                                           (not errors) (assoc-in [entity-key (UUID/fromString (:key uri-parameters)) column-key] (get-in *request* [:entity-params param-key])))))
-                                     (target-entity-database entity-key uri-parameters)
-                                     (inputtable-property-keys entity-key)))]
+    (let [entity-class-schema (entity-class-schema entity-class-key)
+          database            (->> (reduce (fn [database property-key]
+                                             (let [many-to-one? (= (property-type entity-class-key property-key) :many-to-one)
+                                                   column-key   (cond-> property-key
+                                                                  many-to-one? (many-to-one-relationship-key-to-physical-column-key))
+                                                   param-key    (cond->> (param-key entity-class-key property-key)
+                                                                  many-to-one? (#(keyword (format "%s-key" (name %)))))
+                                                   errors       (not-empty (get-in *request* [:entity-param-errors param-key]))]
+                                               (cond-> database
+                                                 (not errors) (assoc-in [entity-class-key (UUID/fromString (:key uri-parameters)) column-key] (get-in *request* [:entity-params param-key])))))
+                                           (target-contained-database entity-class-key uri-parameters)
+                                           (inputtable-property-keys entity-class-key)))]
       (if (not-empty (get-in *request* [:entity-param-errors]))
-        (edit-view entity-key (get-in database [entity-key (UUID/fromString (:key uri-parameters))]))
+        (edit-view entity-class-key (get-in database [entity-class-key (UUID/fromString (:key uri-parameters))]))
         (do (save! @database-schema database *transaction*)
-            (layout (string/capitalize (dog-mission/translate :update-view-title (dog-mission/translate entity-key)))
-                    (javascript-tag (<< "$.crossplane.goToWithMethodAndParams('~(to-uri (<< \"/~(name entity-key)\"))', 'get', ~(json/write-str (base64-decode (get-in *request* [:params :index-params]))));"))))))))
+            (layout (string/capitalize (dog-mission/translate :update-view-title (dog-mission/translate entity-class-key)))
+                    (javascript-tag (<< "$.crossplane.goToWithMethodAndParams('~(to-uri (<< \"/~(name entity-class-key)\"))', 'get', ~(json/write-str (base64-decode (get-in *request* [:params :index-params]))));"))))))))
 
 (defn destroy-controller
-  [entity-key uri-parameters]
-  (layout (string/capitalize (dog-mission/translate :destroy-view-title (dog-mission/translate entity-key)))
+  [entity-class-key uri-parameters]
+  (layout (string/capitalize (dog-mission/translate :destroy-view-title (dog-mission/translate entity-class-key)))
           (list [:p "destroy"]
-                (link-to-with-method-and-params {:class "btn btn-default"} (to-uri (<< "/~(name entity-key)")) :get (base64-decode (get-in *request* [:params :index-params])) (string/capitalize (dog-mission/translate :back))))))
+                (link-to-with-method-and-params {:class "btn btn-default"} (to-uri (<< "/~(name entity-class-key)")) :get (base64-decode (get-in *request* [:params :index-params])) (string/capitalize (dog-mission/translate :back))))))
 
 ;; Rouring.
 
@@ -852,4 +853,4 @@
                     [:get    "/%s/:key/edit" edit-controller]
                     [:patch  "/%s/:key"      update-controller]
                     [:delete "/%s/:key"      destroy-controller]])
-            (entity-keys)))))
+            (entity-class-keys)))))
