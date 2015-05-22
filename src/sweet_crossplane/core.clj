@@ -66,7 +66,7 @@
   [& args]
   (apply radial-mount/property-message-key args))
 
-(declare entity-class-keys input-property-keys parse-property-param)
+(declare entity-class-keys inputtable-property-keys parse-property-param)
 
 (defn wrap-entity-params
   [handler]
@@ -82,7 +82,7 @@
                                    (cond-> request
                                      (.startsWith (name param-key) (name (sweet-crossplane.core/param-key entity-class-key property-key))) (#(or (assoc-entity-param % param-key entity-class-key property-key) %))))
                                  request
-                                 (combinatorics/cartesian-product (input-property-keys entity-class-key) (keys (:params request)))))
+                                 (combinatorics/cartesian-product (inputtable-property-keys entity-class-key) (keys (:params request)))))
                        request
                        (entity-class-keys))))))
 
@@ -154,18 +154,33 @@
   ([entity-class-key]
    (property-keys entity-class-key :columns :many-to-one-relationships :one-to-many-relationships)))
 
-(defn input-property-keys  ; TODO: オプションで制御できるようにする。
+(defn inputtable-property-keys
   [entity-class-key]
   (property-keys entity-class-key :columns :many-to-one-relationships))
+
+(defn representative-property-key
+  [entity-class-key]
+  (or (:representative (entity-class-schema entity-class-key))
+      (some #{:name} (property-keys entity-class-key))
+      (first (property-keys entity-class-key))))
+
+(defn placeholder
+  [entity-class-key property-key]
+  (get-in (entity-class-schema entity-class-key) [:placeholders property-key]))
 
 (defn search-condition-property-keys
   [entity-class-key]
   (or (get-in (entity-class-schema entity-class-key) [:search-condition :properties])
-      (input-property-keys entity-class-key)))
+      (inputtable-property-keys entity-class-key)))
 
 (defn list-property-keys
   [entity-class-key]
   (or (get-in (entity-class-schema entity-class-key) [:list :properties])
+      (property-keys entity-class-key)))
+
+(defn input-property-keys
+  [entity-class-key]
+  (or (get-in (entity-class-schema entity-class-key) [:input :properties])
       (property-keys entity-class-key)))
 
 (defn sort-keyfn-and-comp
@@ -174,22 +189,12 @@
     [(or keyfn (first (list-property-keys entity-class-key)))
      (or comp  compare)]))
 
-(defn representative-property-key
-  [entity-class-key]
-  (or (:representative (entity-class-schema entity-class-key))
-      (some #{:name} (property-keys entity-class-key))
-      (first (property-keys entity-class-key))))
-
 (defn property-schema
   [entity-class-key property-key]
   (let [entity-class-schema (entity-class-schema entity-class-key)]
     (or (get-in entity-class-schema [:columns                   property-key])
         (get-in entity-class-schema [:many-to-one-relationships property-key])
         (get-in entity-class-schema [:one-to-many-relationships property-key]))))
-
-(defn placeholder
-  [entity-class-key property-key]
-  (get-in (entity-class-schema entity-class-key) [:placeholders property-key]))
 
 (defn property-type
   [entity-class-key property-key]
@@ -655,7 +660,7 @@
    [method uri]
    (hidden-field :index-params (get-in *request* [:params :index-params]))
    (error-message-control entity-class-key (get-in *request* [:entity-param-errors]) radial-mount-errors)
-   (map #(input-control entity-class-key entity % (get radial-mount-errors %)) (property-keys entity-class-key))
+   (map #(input-control entity-class-key entity % (get radial-mount-errors %)) (input-property-keys entity-class-key))
    [:p
     (submit-button {:class "btn btn-primary"} (string/capitalize (dog-mission/translate submit-button-caption)))
     "&nbsp;"
@@ -797,14 +802,16 @@
   [entity-class-key database entity-key view-fn]
   (let [entity-class-schema (entity-class-schema entity-class-key)
         database            (->> (reduce (fn [database property-key]
-                                           (let [many-to-one? (= (property-type entity-class-key property-key) :many-to-one)
-                                                 column-key   (cond-> property-key
-                                                                many-to-one? (many-to-one-relationship-key-to-physical-column-key))
-                                                 param-key    (cond-> (param-key entity-class-key property-key)
-                                                                many-to-one? (#(keyword (format "%s-key" (name %)))))
-                                                 errors       (not-empty (get-in *request* [:entity-param-errors param-key]))]
-                                             (cond-> database
-                                               (not errors) (assoc-in [entity-class-key entity-key column-key] (get-in *request* [:entity-params param-key])))))
+                                           (if (some #{property-key} (inputtable-property-keys entity-class-key))
+                                             (let [many-to-one? (= (property-type entity-class-key property-key) :many-to-one)
+                                                   column-key   (cond-> property-key
+                                                                  many-to-one? (many-to-one-relationship-key-to-physical-column-key))
+                                                   param-key    (cond-> (param-key entity-class-key property-key)
+                                                                  many-to-one? (#(keyword (format "%s-key" (name %)))))
+                                                   errors       (not-empty (get-in *request* [:entity-param-errors param-key]))]
+                                               (cond-> database
+                                                 (not errors) (assoc-in [entity-class-key entity-key column-key] (get-in *request* [:entity-params param-key]))))
+                                             database))
                                          database
                                          (input-property-keys entity-class-key)))]
     (if (not-empty (get-in *request* [:entity-param-errors]))
