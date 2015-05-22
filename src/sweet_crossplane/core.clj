@@ -713,6 +713,11 @@
   (layout (string/capitalize (dog-mission/translate :edit-view-title (dog-mission/translate entity-class-key)))
           (input-form-panel entity-class-key entity radial-mount-errors :patch (<< "/~(name entity-class-key)/~(:key entity)") :update)))
 
+(defn back-to-index-view
+  [entity-class-key]
+  (layout ""
+          (javascript-tag (<< "$.crossplane.goToWithMethodAndParams('~(to-uri (<< \"/~(name entity-class-key)\"))', 'get', ~(json/write-str (base64-decode (get-in *request* [:params :index-params]))));"))))
+
 ;; Controllers.
 
 (defmulti condition
@@ -798,8 +803,8 @@
   (->> (database-data @database-schema *transaction* entity-class-key ($= :key entity-key))
        (database      @database-schema)))
 
-(defn save-entity!
-  [entity-class-key database entity-key view-fn]
+(defn create-or-update-entity!
+  [entity-class-key database entity-key new-or-edit-view-fn]
   (let [entity-class-schema (entity-class-schema entity-class-key)
         database            (->> (reduce (fn [database property-key]
                                            (if (some #{property-key} (inputtable-property-keys entity-class-key))
@@ -815,11 +820,17 @@
                                          database
                                          (input-property-keys entity-class-key)))]
     (if (not-empty (get-in *request* [:entity-param-errors]))
-      (view-fn entity-class-key (get-in database [entity-class-key entity-key]))
-      (if-let [radial-mount-errors (not-empty (get-in (radial-mount/validate @database-schema database) [entity-class-key entity-key]))]
-        (view-fn entity-class-key (get-in database [entity-class-key entity-key]) radial-mount-errors)
-        (do (save! @database-schema database *transaction*)
-            (layout "" (javascript-tag (<< "$.crossplane.goToWithMethodAndParams('~(to-uri (<< \"/~(name entity-class-key)\"))', 'get', ~(json/write-str (base64-decode (get-in *request* [:params :index-params]))));"))))))))
+      (new-or-edit-view-fn entity-class-key (get-in database [entity-class-key entity-key]))
+      (do nil  ; TODO: ここに、ユーザー・コードでのデータ更新処理を入れる。
+          (if-let [radial-mount-errors (not-empty (get-in (radial-mount/validate @database-schema database) [entity-class-key entity-key]))]
+            (new-or-edit-view-fn entity-class-key (get-in database [entity-class-key entity-key]) radial-mount-errors)
+            (do (save! @database-schema database *transaction*)
+                (back-to-index-view entity-class-key)))))))
+
+(defn delete-entity!
+  [entity-class-key database entity-key]
+  (save! @database-schema (dissoc-in database [entity-class-key entity-key]) *transaction*)
+  (back-to-index-view entity-class-key))
 
 (defn index-controller
   [entity-class-key uri-parameters]
@@ -839,7 +850,7 @@
 (defn create-controller
   [entity-class-key uri-parameters]
   (with-db-transaction'
-    (save-entity! entity-class-key (database @database-schema) (new-key) new-view)))
+    (create-or-update-entity! entity-class-key (database @database-schema) (new-key) new-view)))
 
 (defn edit-controller
   [entity-class-key uri-parameters]
@@ -851,12 +862,13 @@
   [entity-class-key uri-parameters]
   (with-db-transaction'
     (let [entity-key (UUID/fromString (:key uri-parameters))]
-      (save-entity! entity-class-key (entity-contained-database entity-class-key entity-key) entity-key edit-view))))
+      (create-or-update-entity! entity-class-key (entity-contained-database entity-class-key entity-key) entity-key edit-view))))
 
 (defn destroy-controller
   [entity-class-key uri-parameters]
-  (layout "" (list [:p "destroy"]
-                   (link-to-with-method-and-params {:class "btn btn-default"} (to-uri (<< "/~(name entity-class-key)")) :get (base64-decode (get-in *request* [:params :index-params])) (string/capitalize (dog-mission/translate :back))))))
+  (with-db-transaction'
+    (let [entity-key (UUID/fromString (:key uri-parameters))]
+      (delete-entity! entity-class-key (entity-contained-database entity-class-key entity-key) entity-key))))
 
 ;; Rouring.
 
