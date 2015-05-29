@@ -813,19 +813,24 @@
                                                                   many-to-one? (many-to-one-relationship-key-to-physical-column-key))
                                                    param-key    (cond-> (param-key entity-class-key property-key)
                                                                   many-to-one? (#(keyword (format "%s-key" (name %)))))
+                                                   param-value  (get-in *request* [:entity-params param-key])
                                                    errors       (not-empty (get-in *request* [:entity-param-errors param-key]))]
                                                (cond-> database
-                                                 (not errors) (assoc-in [entity-class-key entity-key column-key] (get-in *request* [:entity-params param-key]))))
+                                                 (not errors) (-> (cond-> many-to-one? (#(->> (database-data           @database-schema *transaction* (:table-key (property-schema entity-class-key property-key)) ($= :key param-value) (get-data %))
+                                                                                              (twin-spar.core/database @database-schema))))
+                                                                  (assoc-in [entity-class-key entity-key column-key] param-value))))
                                              database))
                                          database
                                          (input-property-keys entity-class-key)))]
     (if (not-empty (get-in *request* [:entity-param-errors]))
       (new-or-edit-view-fn entity-class-key (get-in database [entity-class-key entity-key]))
-      (do nil  ; TODO: ここに、ユーザー・コードでのデータ更新処理を入れる。
+      (do (println "***" (not-empty (get-in (radial-mount/validate @database-schema database) [entity-class-key entity-key])))  ; TODO: ここに、ユーザー・コードでのデータ更新処理を入れる。
           (if-let [radial-mount-errors (not-empty (get-in (radial-mount/validate @database-schema database) [entity-class-key entity-key]))]
             (new-or-edit-view-fn entity-class-key (get-in database [entity-class-key entity-key]) radial-mount-errors)
             (do (save! @database-schema database *transaction*)
                 (back-to-index-view entity-class-key)))))))
+
+;; TODO: relationshipのvalidation。twin-sparのget-inserted-rowsはmapを返すので、radial-mountではrelationshipの検査が出来ない……。
 
 (defn delete-entity!
   [entity-class-key database entity-key]
