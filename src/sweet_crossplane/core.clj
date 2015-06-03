@@ -19,8 +19,10 @@
             (radial-mount       [core          :as    radial-mount])
             (twin-spar          [core          :refer :all]))
   (:import  (java.net           URLEncoder)
+            (java.sql           SQLException)
             (java.text          ParseException)
-            (java.util          Locale TimeZone UUID)))
+            (java.util          Locale TimeZone UUID)
+            (org.joda.time      DateTimeZone)))
 
 (dog-mission/conj-resource-bundle-namespace "sweet-crossplane.message")
 
@@ -38,7 +40,8 @@
   [handler]
   (fn [{:keys [uri query-string] :as request}]
     (if-let [time-zone-id (get-in request [:cookies "time-zone-id" :value])]
-      (binding [dog-mission/*time-zone* (TimeZone/getTimeZone time-zone-id)]
+      (binding [dog-mission/*time-zone*      (TimeZone/getTimeZone time-zone-id)
+                dog-mission/*joda-time-zone* (DateTimeZone/forTimeZone dog-mission/*time-zone*)]
         (handler request))
       (compojure.response/render (html5 [:body
                                          (hidden-field   :go-back-uri (str uri (and (not-empty query-string) "?") query-string))
@@ -461,10 +464,12 @@
        {:class "has-error has-feedback"})
      (label param-key-key (string/capitalize (dog-mission/translate param-key)))
      (hidden-field param-key-key (get-in *request* [:entity-params param-key-key]))
-     [:div.input-group
+     [:div.input-group.many-to-one
       (text-field {:class "form-control", :readonly "readonly"} param-key-name-key (format-property-param entity-class-key property-key (get-in *request* [:entity-params param-key-name-key])))
       [:span.input-group-addon {:data-open-window-uri (to-uri (<< "/~(name (:table-key (property-schema entity-class-key property-key)))/select?target-element-id=~(URLEncoder/encode (name param-key-key))"))}
        [:span.glyphicon.glyphicon-search]]]]))
+
+;; TODO: ドロップダウンで選択できるようにする。
 
 (defmethod condition-control :default
   [entity-class-key property-key]
@@ -538,7 +543,8 @@
      (if (or parse-errors radial-mount-errors)
        {:class "has-error has-feedback"})
      (label param-key (string/capitalize (dog-mission/translate param-key)))
-     (text-field
+     ((cond-> text-field
+        (= (:type (property-schema entity-class-key property-key)) :text) ((constantly text-area)))
       {:class "form-control", :placeholder (placeholder entity-class-key property-key)}
       param-key
       (if parse-errors
@@ -549,7 +555,7 @@
   [& args]
   (apply string-input-control args))
 
-(defmethod input-control :text  ; TODO: stringとの共用をやめて、textareaに変更する。
+(defmethod input-control :text
   [& args]
   (apply string-input-control args))
 
@@ -623,24 +629,25 @@
        {:class "has-error has-feedback"})
      (label param-key-key (string/capitalize (dog-mission/translate param-key)))
      (hidden-field param-key-key (get entity (many-to-one-relationship-key-to-physical-column-key property-key)))
-     [:div.input-group
+     [:div.input-group.many-to-one
       (text-field {:class "form-control", :readonly "readonly"} param-key-name-key (format-property-param entity-class-key property-key (get entity property-key)))
       [:span.input-group-addon {:data-open-window-uri (to-uri (<< "/~(name (:table-key (property-schema entity-class-key property-key)))/select?target-element-id=~(URLEncoder/encode (name param-key-key))"))}
        [:span.glyphicon.glyphicon-search]]]]))
+
+;; TODO: ドロップダウンで選択できるようにする。
 
 (defmethod input-control :one-to-many
   [entity-class-key entity property-key radial-mount-errors]
   (let [param-key (param-key entity-class-key property-key)]
     [:div.form-group
      (label param-key (string/capitalize (dog-mission/translate param-key)))
-     (text-field {:class "form-control", :disabled "disabled"} param-key (format-property-param entity-class-key property-key (get entity property-key)))]))  ; TODO: textareにする？
+     (text-area {:class "form-control", :disabled "disabled"} param-key (format-property-param entity-class-key property-key (get entity property-key)))]))
 
 (defmethod input-control :default
   [entity-class-key entity property-key radial-mount-errors]
   nil)
 
 ;; TODO: エラー表示が2行になる場合をテストする。
-;; TODO: categoryを必須にするとどうなる？何もしなくても動くといいなぁ……。
 
 (defn error-message-control
   [entity-class-key parse-errors radial-mount-errors]
@@ -824,13 +831,22 @@
                                          (input-property-keys entity-class-key)))]
     (if (not-empty (get-in *request* [:entity-param-errors]))
       (new-or-edit-view-fn entity-class-key (get-in database [entity-class-key entity-key]))
-      (do (println "***" (not-empty (get-in (radial-mount/validate @database-schema database) [entity-class-key entity-key])))  ; TODO: ここに、ユーザー・コードでのデータ更新処理を入れる。
-          (if-let [radial-mount-errors (not-empty (get-in (radial-mount/validate @database-schema database) [entity-class-key entity-key]))]
-            (new-or-edit-view-fn entity-class-key (get-in database [entity-class-key entity-key]) radial-mount-errors)
-            (do (save! @database-schema database *transaction*)
-                (back-to-index-view entity-class-key)))))))
+      (let [database (if-let [before-validate-fn (:before-validate-fn entity-class-schema)]
+                       (before-validate-fn database entity-class-key entity-key)
+                       database)]
+        (if-let [errors (or (not-empty (get-in (radial-mount/validate @database-schema database) [entity-class-key entity-key]))
+                            (try
+                              (save! @database-schema database *transaction*)
+                              nil
+                              (catch SQLException ex
+                                (or (if-let [sql-exception-catch-fn (:sql-exception-catch-fn entity-class-schema)]
+                                      (sql-exception-catch-fn ex))
+                                    (throw ex)))))]
+          (new-or-edit-view-fn entity-class-key (get-in database [entity-class-key entity-key]) errors)
+          (back-to-index-view entity-class-key))))))
 
-;; TODO: relationshipのvalidation。twin-sparのget-inserted-rowsはmapを返すので、radial-mountではrelationshipの検査が出来ない……。
+;; TODO: リファクタリング。new-or-editの呼び出しが重複している。
+;; TODO: radial-mount-errorsをerrorsに変更する。
 
 (defn delete-entity!
   [entity-class-key database entity-key]
@@ -891,7 +907,7 @@
       (some #(some (fn [[method path-format controller]]
                      (if-let [uri-parameters (route-matches method (format path-format (name %)))]
                        (compojure.response/render (controller % uri-parameters) request)))
-                   [[:get    "/%s"           index-controller]  ; TODO: 画面生成を抑制するオプションを追加する。毎回うまいこと上書きできるとは限らないため。
+                   [[:get    "/%s"           index-controller]  ; TODO: 画面生成を抑制するオプションを追加する。毎回うまいこと上書きできるとは限らないもんね。
                     [:get    "/%s/select"    select-controller]
                     [:get    "/%s/new"       new-controller]
                     [:post   "/%s"           create-controller]
@@ -899,3 +915,5 @@
                     [:patch  "/%s/:key"      update-controller]
                     [:delete "/%s/:key"      destroy-controller]])
             (entity-class-keys)))))
+
+;; TODO: condition-controlとinput-controlの共通部分を抽出してリファクタリングする。うーん、無理かなぁ？

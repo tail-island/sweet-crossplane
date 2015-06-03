@@ -1,13 +1,18 @@
 table.table {
-  margin-bottom: 0;
+  margin-bottom:    0;
 }
 
 table.table td > div {
-  max-height:    8em;
-  overflow:      hidden;
+  max-height:       8em;
+  overflow:         hidden;
 }
 
 table.table td.command-cell {
-  text-align:    right;
-  white-space:   nowrap;
+  text-align:       right;
+  white-space:      nowrap;
 }
+
+div.many-to-one .form-control[readonly] {
+  background-color: #ffffff;
+}
+  
