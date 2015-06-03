@@ -533,14 +533,14 @@
 ;; controls for input value.
 
 (defmulti input-control
-  (fn [entity-class-key entity property-key radial-mount-errors] (property-type entity-class-key property-key)))
+  (fn [entity-class-key entity property-key errors] (property-type entity-class-key property-key)))
 
 (defn- string-input-control
-  [entity-class-key entity property-key radial-mount-errors]
+  [entity-class-key entity property-key errors]
   (let [param-key    (param-key entity-class-key property-key)
         parse-errors (not-empty (get-in *request* [:entity-param-errors param-key]))]
     [:div.form-group
-     (if (or parse-errors radial-mount-errors)
+     (if (or parse-errors errors)
        {:class "has-error has-feedback"})
      (label param-key (string/capitalize (dog-mission/translate param-key)))
      ((cond-> text-field
@@ -560,11 +560,11 @@
   (apply string-input-control args))
 
 (defn- number-input-control
-  [entity-class-key entity property-key radial-mount-errors]
+  [entity-class-key entity property-key errors]
   (let [param-key    (param-key entity-class-key property-key)
         parse-errors (not-empty (get-in *request* [:entity-param-errors param-key]))]
     [:div.form-group
-     (if (or parse-errors radial-mount-errors)
+     (if (or parse-errors errors)
        {:class "has-error has-feedback"})
      (label param-key (string/capitalize (dog-mission/translate param-key)))
      (text-field
@@ -583,21 +583,21 @@
   (apply number-input-control args))
 
 (defmethod input-control :boolean
-  [entity-class-key entity property-key radial-mount-errors]
+  [entity-class-key entity property-key errors]
   (let [param-key    (param-key entity-class-key property-key)
         parse-errors (not-empty (get-in *request* [:entity-param-errors param-key]))]
     [:div.form-group
-     (if (or parse-errors radial-mount-errors)
+     (if (or parse-errors errors)
        {:class "has-error has-feedback"})
      (label param-key (string/capitalize (dog-mission/translate param-key)))
      (drop-down {:class "form-control"} param-key (map (partial format-property-param entity-class-key property-key) [nil true false]) (format-property-param entity-class-key property-key (get entity property-key)))]))
 
 (defn- date-timestamp-input-control
-  [entity-class-key entity property-key radial-mount-errors]
+  [entity-class-key entity property-key errors]
   (let [param-key    (param-key entity-class-key property-key)
         parse-errors (not-empty (get-in *request* [:entity-param-errors param-key]))]
     [:div.form-group
-     (if (or parse-errors radial-mount-errors)
+     (if (or parse-errors errors)
        {:class "has-error has-feedback"})
      (label param-key (string/capitalize (dog-mission/translate param-key)))
      [:div.input-group.date {:data-type (:type (property-schema entity-class-key property-key))}
@@ -619,13 +619,13 @@
   (apply date-timestamp-input-control args))
 
 (defmethod input-control :many-to-one
-  [entity-class-key entity property-key radial-mount-errors]
+  [entity-class-key entity property-key errors]
   (let [param-key          (param-key entity-class-key property-key)
         param-key-key      (keyword (format "%s-key"    (name param-key)))
         param-key-name-key (keyword (format "%s-name--" (name param-key-key)))
         parse-errors       (get-in *request* [:entity-pararam-errors param-key])]
     [:div.form-group
-     (if (or parse-errors radial-mount-errors)
+     (if (or parse-errors errors)
        {:class "has-error has-feedback"})
      (label param-key-key (string/capitalize (dog-mission/translate param-key)))
      (hidden-field param-key-key (get entity (many-to-one-relationship-key-to-physical-column-key property-key)))
@@ -637,37 +637,35 @@
 ;; TODO: ドロップダウンで選択できるようにする。
 
 (defmethod input-control :one-to-many
-  [entity-class-key entity property-key radial-mount-errors]
+  [entity-class-key entity property-key errors]
   (let [param-key (param-key entity-class-key property-key)]
     [:div.form-group
      (label param-key (string/capitalize (dog-mission/translate param-key)))
      (text-area {:class "form-control", :disabled "disabled"} param-key (format-property-param entity-class-key property-key (get entity property-key)))]))
 
 (defmethod input-control :default
-  [entity-class-key entity property-key radial-mount-errors]
+  [entity-class-key entity property-key errors]
   nil)
 
-;; TODO: エラー表示が2行になる場合をテストする。
-
 (defn error-message-control
-  [entity-class-key parse-errors radial-mount-errors]
+  [entity-class-key parse-errors entity-errors]
   [:ul.bg-danger
    (map (fn [property-key]
           (let [param-key (param-key entity-class-key property-key)]
             (if-let [errors (not-empty (concat (get parse-errors param-key)
-                                               (get radial-mount-errors property-key)))]
+                                               (get entity-errors property-key)))]
               (map (fn [error]
                      [:li error])
                    errors))))
         (property-keys entity-class-key))])
 
 (defn input-form-panel
-  [entity-class-key entity radial-mount-errors method uri submit-button-caption]
+  [entity-class-key entity entity-errors method uri submit-button-caption]
   (form-to
    [method uri]
    (hidden-field :index-params (get-in *request* [:params :index-params]))
-   (error-message-control entity-class-key (get-in *request* [:entity-param-errors]) radial-mount-errors)
-   (map #(input-control entity-class-key entity % (get radial-mount-errors %)) (input-property-keys entity-class-key))
+   (error-message-control entity-class-key (get-in *request* [:entity-param-errors]) entity-errors)
+   (map #(input-control entity-class-key entity % (get entity-errors %)) (input-property-keys entity-class-key))
    [:p
     (submit-button {:class "btn btn-primary"} (string/capitalize (dog-mission/translate submit-button-caption)))
     "&nbsp;"
@@ -711,14 +709,14 @@
                                                               (link-to-javascript {:class "btn btn-default"} "window.close()" (string/capitalize (dog-mission/translate :cancel)))))))]])))
 
 (defn new-view
-  [entity-class-key entity & [radial-mount-errors]]
+  [entity-class-key entity & [entity-errors]]
   (layout (string/capitalize (dog-mission/translate :new-view-title (dog-mission/translate entity-class-key)))
-          (input-form-panel entity-class-key entity radial-mount-errors :post (<< "/~(name entity-class-key)") :create)))
+          (input-form-panel entity-class-key entity entity-errors :post (<< "/~(name entity-class-key)") :create)))
 
 (defn edit-view
-  [entity-class-key entity & [radial-mount-errors]]
+  [entity-class-key entity & [entity-errors]]
   (layout (string/capitalize (dog-mission/translate :edit-view-title (dog-mission/translate entity-class-key)))
-          (input-form-panel entity-class-key entity radial-mount-errors :patch (<< "/~(name entity-class-key)/~(:key entity)") :update)))
+          (input-form-panel entity-class-key entity entity-errors :patch (<< "/~(name entity-class-key)/~(:key entity)") :update)))
 
 (defn back-to-index-view
   [entity-class-key]
@@ -828,25 +826,22 @@
                                                                   (assoc-in [entity-class-key entity-key column-key] param-value))))
                                              database))
                                          database
-                                         (input-property-keys entity-class-key)))]
-    (if (not-empty (get-in *request* [:entity-param-errors]))
-      (new-or-edit-view-fn entity-class-key (get-in database [entity-class-key entity-key]))
-      (let [database (if-let [before-validate-fn (:before-validate-fn entity-class-schema)]
-                       (before-validate-fn database entity-class-key entity-key)
-                       database)]
-        (if-let [errors (or (not-empty (get-in (radial-mount/validate @database-schema database) [entity-class-key entity-key]))
-                            (try
-                              (save! @database-schema database *transaction*)
-                              nil
-                              (catch SQLException ex
-                                (or (if-let [sql-exception-catch-fn (:sql-exception-catch-fn entity-class-schema)]
-                                      (sql-exception-catch-fn ex))
-                                    (throw ex)))))]
-          (new-or-edit-view-fn entity-class-key (get-in database [entity-class-key entity-key]) errors)
-          (back-to-index-view entity-class-key))))))
-
-;; TODO: リファクタリング。new-or-editの呼び出しが重複している。
-;; TODO: radial-mount-errorsをerrorsに変更する。
+                                         (input-property-keys entity-class-key)))
+        entity-errors       (or (and (not-empty (get-in *request* [:entity-param-errors])) {})
+                                (let [database (if-let [before-validate-fn (:before-validate-fn entity-class-schema)]
+                                                 (before-validate-fn database entity-class-key entity-key)
+                                                 database)]
+                                  (or (not-empty (get-in (radial-mount/validate @database-schema database) [entity-class-key entity-key]))
+                                      (try
+                                        (save! @database-schema database *transaction*)
+                                        nil
+                                        (catch SQLException ex
+                                          (or (if-let [sql-exception-catch-fn (:sql-exception-catch-fn entity-class-schema)]
+                                                (sql-exception-catch-fn ex))
+                                              (throw ex)))))))]
+    (if entity-errors
+      (new-or-edit-view-fn entity-class-key (get-in database [entity-class-key entity-key]) entity-errors)
+      (back-to-index-view entity-class-key))))
 
 (defn delete-entity!
   [entity-class-key database entity-key]
@@ -916,4 +911,4 @@
                     [:delete "/%s/:key"      destroy-controller]])
             (entity-class-keys)))))
 
-;; TODO: condition-controlとinput-controlの共通部分を抽出してリファクタリングする。うーん、無理かなぁ？
+;; TODO: condition-controlとinput-controlの共通部分を抽出してリファクタリングする。できるかなぁ……。
