@@ -699,8 +699,7 @@
              [:div.col-md-3 (search-condition-panel entity-class-key {:target-element-id (get-in *request* [:params :target-element-id])})]
              [:div.col-md-9 (list-entities-panel    entity-class-key entities page-count page
                                                     (fn [entity]
-                                                      (link-to-javascript
-                                                       {:class "btn btn-primary btn-xs"} (<< "$.crossplane.setOpenerSelectProperty('~{target-element-id}', '~(:key entity)', '~(format-property-param entity-class-key representative-property-key (get entity representative-property-key))'); window.close()")
+                                                      (link-to-javascript {:class "btn btn-primary btn-xs"} (<< "$.crossplane.setOpenerSelectProperty('~{target-element-id}', '~(:key entity)', '~(format-property-param entity-class-key representative-property-key (get entity representative-property-key))'); window.close()")
                                                        [:span.glyphicon.glyphicon-link]))
                                                     (fn []
                                                       (let [target-element-id (get-in *request* [:params :target-element-id])]
