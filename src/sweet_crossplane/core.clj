@@ -140,6 +140,8 @@
 
 ;; Models.
 
+;; TODO: STIに対応する。。。面倒くさい。。。
+
 (defn entity-class-keys
   []
   (keys @database-schema))
@@ -185,6 +187,8 @@
   [entity-class-key]
   (or (get-in (entity-class-schema entity-class-key) [:input :properties])
       (property-keys entity-class-key)))
+
+;; TODO: STIに合わせて仕様変更する。
 
 (defn sort-keyfn-and-comp
   [entity-class-key]
