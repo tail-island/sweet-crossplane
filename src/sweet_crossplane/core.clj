@@ -192,9 +192,9 @@
 
 (defn sort-keyfn-and-comp
   [entity-class-key]
-  (let [[keyfn comp] (get-in (entity-class-schema entity-class-key) [:list :sort-by])]
-    [(or keyfn (first (list-property-keys entity-class-key)))
-     (or comp  compare)]))
+  (let [{:keys [key comp]} (get-in (entity-class-schema entity-class-key) [:list :sort-by])]
+    [(or key  (first (list-property-keys entity-class-key)))
+     (or comp compare)]))
 
 (defn property-schema
   [entity-class-key property-key]
@@ -831,16 +831,16 @@
                                          database
                                          (input-property-keys entity-class-key)))
         entity-errors       (or (and (not-empty (get-in *request* [:entity-param-errors])) {})
-                                (let [database (if-let [before-validate-fn (:before-validate-fn entity-class-schema)]
-                                                 (before-validate-fn database entity-class-key entity-key)
+                                (let [database (if-let [before-validate (:before-validate entity-class-schema)]
+                                                 (before-validate database entity-class-key entity-key)
                                                  database)]
                                   (or (not-empty (get-in (radial-mount/validate @database-schema database) [entity-class-key entity-key]))
                                       (try
                                         (save! @database-schema database *transaction*)
                                         nil
                                         (catch SQLException ex
-                                          (or (if-let [sql-exception-catch-fn (:sql-exception-catch-fn entity-class-schema)]
-                                                (sql-exception-catch-fn ex))
+                                          (or (if-let [sql-exception-catch (:sql-exception-catch entity-class-schema)]
+                                                (sql-exception-catch ex))
                                               (throw ex)))))))]
     (if entity-errors
       (new-or-edit-view-fn entity-class-key (get-in database [entity-class-key entity-key]) entity-errors)
