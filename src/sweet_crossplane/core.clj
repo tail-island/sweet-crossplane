@@ -17,6 +17,7 @@
                                 [page          :refer :all]
                                 [util          :refer :all])
             (radial-mount       [core          :as    radial-mount])
+            (stem-bearing       [core          :refer :all])
             (twin-spar          [core          :refer :all]))
   (:import  (java.net           URLEncoder)
             (java.sql           SQLException)
